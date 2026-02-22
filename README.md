@@ -17,8 +17,8 @@ No Electron. No Docker. No Mac Mini. No 500K-line codebase. No paid installation
 
 <table>
 <tr>
-<td width="50%"><img src="assets/demo/autonomous_explore.png" width="100%"><br><em>Autonomous quantitative analysis — the agent explores data sources and generates reports on its own schedule.</em></td>
-<td width="50%"><img src="assets/demo/wechat_batch.png" width="100%"><br><em>WeChat batch messaging — yes, it can drive WeChat too.</em></td>
+<td width="60%"><img src="assets/demo/autonomous_explore.png" width="100%"><br><em>Autonomous quantitative analysis — the agent explores data sources and generates reports on its own schedule.</em></td>
+<td width="40%"><img src="assets/demo/wechat_batch.png" width="100%"><br><em>WeChat batch messaging — yes, it can drive WeChat too.</em></td>
 </tr>
 </table>
 
