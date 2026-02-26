@@ -281,6 +281,7 @@ class GenericAgentHandler(BaseHandler):
         question = args.get("question", "请提供输入：")
         candidates = args.get("candidates", [])
         result = ask_user(question, candidates)
+        yield f"Waiting for your answer ...\n"
         return StepOutcome(result, next_prompt="", should_exit=True)
     
     def do_web_scan(self, args, response):
