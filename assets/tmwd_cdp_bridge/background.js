@@ -2,17 +2,33 @@
 chrome.runtime.onInstalled.addListener(() => console.log('CDP Bridge installed'));
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.action === 'getCookies') {
-    handleGetCookies(msg, sender).then(sendResponse);
+  if (msg.action === 'cookies') {
+    handleCookies(msg, sender).then(sendResponse);
     return true;
   }
   if (msg.action === 'cdp') {
     handleCDP(msg, sender).then(sendResponse);
     return true;
   }
+  if (msg.action === 'tabs') {
+    (async () => {
+      try {
+        if (msg.method === 'switch') {
+          const tab = await chrome.tabs.update(msg.tabId, { active: true });
+          await chrome.windows.update(tab.windowId, { focused: true });
+          sendResponse({ ok: true });
+        } else {
+          const tabs = await chrome.tabs.query({});
+          const data = tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId }));
+          sendResponse({ ok: true, data });
+        }
+      } catch (e) { sendResponse({ ok: false, error: e.message }); }
+    })();
+    return true;
+  }
 });
 
-async function handleGetCookies(msg, sender) {
+async function handleCookies(msg, sender) {
   try {
     const url = msg.url || sender.tab?.url;
     const origin = url.match(/^https?:\/\/[^\/]+/)[0];

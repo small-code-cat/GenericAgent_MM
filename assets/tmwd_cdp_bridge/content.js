@@ -12,15 +12,15 @@ new MutationObserver(muts => {
 
 async function handle(el) {
   try {
-    const cmd = el.dataset.cmd || 'cookies';
+    const req = el.textContent.trim() ? JSON.parse(el.textContent) : { cmd: 'cookies' };
+    const cmd = req.cmd || 'cookies';
     let resp;
     if (cmd === 'cookies') {
-      resp = await chrome.runtime.sendMessage({ action: 'getCookies', url: location.href });
+      resp = await chrome.runtime.sendMessage({ action: 'cookies', url: req.url || location.href });
     } else if (cmd === 'cdp') {
-      const method = el.dataset.method;
-      const params = el.dataset.params ? JSON.parse(el.dataset.params) : {};
-      const tabId = el.dataset.tabid ? parseInt(el.dataset.tabid) : undefined;
-      resp = await chrome.runtime.sendMessage({ action: 'cdp', method, params, tabId });
+      resp = await chrome.runtime.sendMessage({ action: 'cdp', method: req.method, params: req.params || {}, tabId: req.tabId });
+    } else if (cmd === 'tabs') {
+      resp = await chrome.runtime.sendMessage({ action: 'tabs', method: req.method, tabId: req.tabId });
     } else {
       resp = { ok: false, error: 'unknown cmd: ' + cmd };
     }

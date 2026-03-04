@@ -70,10 +70,14 @@ async def handle_msg(update, ctx):
         return await update.message.reply_text("no")
     msg = await update.message.reply_text("thinking...")
     dq = agent.put_task(update.message.text, source="telegram")
-    await _stream(dq, msg)
+    task = asyncio.create_task(_stream(dq, msg))
+    ctx.user_data['stream_task'] = task
 
 async def cmd_abort(update, ctx):
     agent.abort()
+    task = ctx.user_data.get('stream_task')
+    if task and not task.done():
+        task.cancel()
     await update.message.reply_text("Aborted")
 
 async def cmd_llm(update, ctx):

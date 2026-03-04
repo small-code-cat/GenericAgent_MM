@@ -5,7 +5,18 @@
 授权你进行自主行动，只要不对环境造成副作用都可进行。
 请先选择核心目标，再选择一个小目标进行。最终探测结果形成报告（含操作申请），待用户回来确认后再进行可能的写入或修改操作。
 
-> **must call update_working_checkpoint first**：`自主探索｜≤15回合｜只有cwd内可写｜用户不在(问题存报告)｜报告目录:./autonomous_reports/｜收尾:重读本SOP确认报告目录+更新history｜产出=报告+记忆提案 | **路径警告**：autonomous_reports 在 temp/ 下，用./autonomous_reports/访问，**严禁**`../memory/autonomous_reports/`或`../autonomous_reports/`！`
+---
+## 🚫 Step 0（阻塞）：写入约束便签 — 未完成禁止进入后续步骤
+
+**必须第一个动作就调用** `update_working_checkpoint`，写入以下内容：
+
+```
+自主探索｜≤15回合｜只有cwd内可写｜用户不在(问题存报告)｜报告目录:./autonomous_reports/｜收尾:重读本SOP确认报告目录+更新history｜产出=报告+记忆提案 | 路径警告：autonomous_reports在temp/下，用./autonomous_reports/访问，严禁../memory/autonomous_reports/或../autonomous_reports/！
+```
+
+⛔ **跳过 Step 0 = 违规**。历史教训：R175因跳过此步，报告存错路径（Desktop而非./autonomous_reports/）。
+
+---
 
 ## 📋 大纲
 - 报告目录与规则

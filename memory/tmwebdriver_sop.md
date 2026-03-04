@@ -7,13 +7,14 @@
 
 ## 限制(isTrusted)
 - JS dispatch的事件`isTrusted=false`，敏感操作(文件上传/部分按钮)会被浏览器拦截
-- 文件上传：JS无法填充`<input type=file>`，必须ljqCtrl物理点击+Win32轮询文件对话框
+- ⭐**首选绕过：CDP桥**——CDP派发的Input事件是浏览器原生级别(isTrusted=true)，且无需前台，见下方CDP章节
+- 文件上传：JS无法填充`<input type=file>`，仍需ljqCtrl物理点击+Win32轮询文件对话框
   - 流程：SetForegroundWindow→ljqCtrl点上传按钮→FindWindow轮询对话框→输入路径→轮询关闭
-- 元素→屏幕物理坐标(ljqCtrl点击前必算)：JS一次取rect+窗口信息，公式：
+- 备选：元素→屏幕物理坐标(ljqCtrl/PostMessage点击前必算)：JS一次取rect+窗口信息，公式：
   - `physX = (screenX + rect中心x) * dpr`，`physY = (screenY + chromeH + rect中心y) * dpr`
   - chromeH = outerHeight - innerHeight，dpr = devicePixelRatio
   - 注意：screenX/Y也是CSS像素，所有值先加后统一乘dpr
-- 结论：读信息+普通操作用TMWebDriver；文件上传等敏感操作需配合ljqCtrl
+- 结论：读信息+普通操作用TMWebDriver；需isTrusted事件首选CDP桥；文件上传需配合ljqCtrl
 
 ## 导航
 - `web_scan` 仅读当前页不导航，切换网站用 `web_execute_js` + `location.href='url'`
@@ -42,37 +43,27 @@ fetch('PDF_URL').then(r=>r.blob()).then(b=>{
 - 已修复：移除TM脚本内轮询，改由Python侧`get_session_dict()`前后对比检测新标签
 - 同理：TM脚本中任何后台逻辑都应避免依赖setTimeout轮询
 
-## Cookie+CDP桥(tmwd_cdp_bridge扩展)
-前提：需先安装`assets/tmwd_cdp_bridge/`扩展(含debugger权限)
-触发ID：`__ljq_ctrl`
-### Cookie提取(含HttpOnly)
-注入`id="__ljq_ctrl"`的div(无需data-cmd，默认cookies)→扩展写回JSON到textContent
+## CDP桥(tmwd_cdp_bridge扩展) ⭐首选
+扩展路径：`assets/tmwd_cdp_bridge/`(需安装，含debugger权限)
+调用：MutationObserver监听addedNodes(id=`__ljq_ctrl`)，⚠每次必须remove旧→createElement新→设textContent JSON→appendChild
 ```js
-const d=document.createElement('div');d.id='__ljq_ctrl';
-document.body.appendChild(d);
-await new Promise(r=>setTimeout(r,300));
-return d.textContent; // {ok:true, data:[...]}
+const old = document.getElementById('__ljq_ctrl');
+if (old) old.remove();
+const el = document.createElement('div');
+el.id = '__ljq_ctrl'; el.style.display = 'none';
+el.textContent = JSON.stringify({cmd:'...', ...});
+document.body.appendChild(el);  // 响应写回el.textContent
 ```
-### CDP命令(任意Chrome DevTools Protocol)
-```js
-const d=document.createElement('div');d.id='__ljq_ctrl';
-d.dataset.cmd='cdp'; d.dataset.method='Network.getCookies';
-d.dataset.params=JSON.stringify({urls:[location.href]});
-document.body.appendChild(d);
-await new Promise(r=>setTimeout(r,500));
-return d.textContent; // {ok:true, data:{...}}
-```
-- 可用任意CDP方法(Network/DOM/Page/Runtime等)，参数通过data-params传JSON
-- 每次调用会attach→sendCommand→detach debugger，页面顶部会短暂显示调试提示
+命令：`{cmd:'tabs'}` | `{cmd:'cookies'}` | `{cmd:'cdp', tabId:N, method:'...', params:{...}}`
+- CDP可用任意方法(Input/Network/DOM/Page/Runtime/Emulation等)，每次attach→send→detach
+- ⭐跨tab无需前台：指定tabId即可操作后台标签页
+- ⭐绕过isTrusted：CDP派发的Input事件是浏览器原生级别
 
-## 登录凭证autofill获取
-检测：simphtml.py已内置autofill检测，`web_scan`输出的input会带`data-autofilled="true"`属性，value显示为`⚠️受保护-读tmwebdriver_sop的autofill章节提取`（非真实值）
-问题：`:-webkit-autofill`可探测autofill状态，但`input.value`为空（Chrome安全保护，需物理点击释放）
-突破：PostMessage点击输入框触发释放
-前置：枚举Chrome主窗口标题匹配web_scan当前页标题，不匹配则切换标签页（避免点到后台tab）
-流程：JS检查`:-webkit-autofill`→获取`getBoundingClientRect()*devicePixelRatio`→PostMessage发`WM_LBUTTONDOWN/UP`到`Chrome_RenderWidgetHostHWND`子窗口→读`value`
-坑：多个RenderWidgetHostHWND共存(NexonLauncher等非浏览器Chrome应用也有)，必须EnumWindows按父窗口标题匹配目标页再取其子RenderWidget
-平台：Windows用PostMessage；macOS用CGEvent（未测试）
+## autofill获取
+检测：web_scan输出input带`data-autofilled="true"`，value显示为受保护提示(非真实值，Chrome安全保护需点击释放)
+- ⭐首选CDP：tabs获取tabId→CDP mousePressed点击输入框→autofill值释放→JS读`.value`(无需前台)
+- 备选PostMessage物理点击(仅Windows/需前台)：枚举Chrome窗口标题匹配→rect*dpr→WM_LBUTTONDOWN/UP到Chrome_RenderWidgetHostHWND子窗口
+  - 坑：多RenderWidgetHostHWND共存，必须按父窗口标题匹配再取子窗口
 
 ## 验证码/页面视觉截图
 - 优先：JS `canvas.toDataURL()` 直接拿base64（验证码是canvas/img时最干净，无需截屏）
