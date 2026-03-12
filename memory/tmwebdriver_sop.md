@@ -98,3 +98,10 @@ document.body.appendChild(el);  // 响应写回el.textContent
 - ⚠只能eval表达式，不支持return/函数体包装，构造代码时注意
 - 流程：发postMessage→等→读window._ljqResults[id]获取结果
 - 已验证：读取iframe内DOM(document.title)、填写input均成功
+
+## 连不上排查
+web_scan失败时按序排查：
+①TM没装？→遍历本机所有Chromium浏览器(Chrome/Edge/Brave…)用户数据目录下Extensions/，各子目录manifest.json搜"tampermonkey"
+  没找到→走web_setup_sop；找到→记住装在哪个浏览器
+②浏览器没开？→检查①对应的浏览器进程是否在跑(tasklist/ps)，没有则启动并打开正常URL（⚠about:blank等内部页不加载扩展）
+③WS后台挂了？→socket.connect_ex(('localhost',18766))非0即dead→手动`from TMWebDriver import TMWebDriver; TMWebDriver()`起master

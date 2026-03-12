@@ -120,7 +120,7 @@ def web_scan(tabs_only=False, switch_tab_id=None, text_only=False):
     try:
         if driver is None: first_init_driver()
         if len(driver.get_all_sessions()) == 0:
-            return {"status": "error", "msg": "没有可用的浏览器标签页，请先打开一个浏览器标签页，且确认TMWebDriver浏览器tempermonkey插件已安装并启用。"}
+            return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
         tabs = []
         for sess in driver.get_all_sessions(): 
             sess.pop('connected_at', None)
@@ -180,7 +180,7 @@ def web_execute_js(script, switch_tab_id=None, no_monitor=False):
     try:
         if driver is None: first_init_driver()
         if len(driver.get_all_sessions()) == 0:
-            return {"status": "error", "msg": "没有可用的浏览器标签页，请先打开一个浏览器标签页，且确认TMWebDriver浏览器tempermonkey插件已安装并启用。"}
+            return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
         if switch_tab_id: driver.default_session_id = switch_tab_id
         result = execute_js_rich(script, driver, no_monitor=no_monitor)
         return result
