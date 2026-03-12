@@ -3,7 +3,7 @@
 ## Task Mode 文件IO协议
 
 - 目录：`temp/{task_name}/`（相对代码根GenericAgent/），主agent cwd在temp/时即 `./{task_name}/`
-- 启动：`python agentmain.py --task {task_name} [--llm_no N]`（cwd=代码根）
+- 启动：`python agentmain.py --task {task_name} [--llm_no N]`（cwd=代码根），其中agentmain.py位于代码根目录
 - 流程：写 input.txt → 启动 → 轮询 output.txt → 读回复 → 写 reply.txt 继续 → 不写则5min自动退出
 - input.txt原则：写目标+约束，可指定SOP名。禁写具体实现步骤——除非主agent已读过该SOP确认正确。凭印象猜的步骤会误导subagent
 - output.txt：首轮对话的流式输出（持续append），用mtime/size判断更新
@@ -13,9 +13,10 @@
 
 ```python
 task_dir = os.path.join(agent_root, 'temp', task_name)
+creation_flags = 0x08000000 if platform.system() == 'Windows' else 0
 proc = subprocess.Popen(
     [sys.executable, 'agentmain.py', '--task', task_name],
-    cwd=agent_root, creationflags=0x08000000,
+    cwd=agent_root, creationflags=creation_flags,
     stdout=open(os.path.join(task_dir, 'stdout.log'), 'w', encoding='utf-8'),
     stderr=open(os.path.join(task_dir, 'stderr.log'), 'w', encoding='utf-8'))
 ```
@@ -41,9 +42,35 @@ proc = subprocess.Popen(
 **核心优势**：独立上下文。避免处理文档A的长上下文污染处理文档B的质量
 **约束**：
 - 文件系统共享是优点：不同agent处理不同输入文件，产生不同输出文件
-- 共享资源冲突：键鼠/浏览器主体不可共享（浏览器可分tab但需谨慎）
+- 共享资源冲突：键鼠不可共享；浏览器暂时不可并行使用，避免同时操作同一标签页
 - 不满足map模式的任务 → 主agent顺序执行即可，别用subagent
 **标准流程（map-reduce）**：
 1. 主agent准备阶段：爬取/dump数据，存为多个独立输入文件
 2. 分发：对每个文件启动一个subagent处理（主agent自己也可以处理其中一个）
 3. 收集：等所有subagent完成，主agent读取各输出文件，汇总结果
+
+## subagent内部plan_mode使用
+**原则**：subagent本身是完整agent，接收多步骤任务时应在内部创建plan管理执行
+**触发条件**:任务包含3个以上子步骤、子步骤之间有依赖关系、需要checkpoint来恢复执行
+**实现方式**：
+1. **主agent创建subagent时**：在input.txt中说明任务包含多个步骤，建议使用plan_mode
+2. **subagent内部执行**：检测到多步骤任务后，创建 `./subagent_plan.md` 并使用plan_mode执行
+3. **主agent监控**：只关注最终结果（output*.txt），不需要关心subagent内部如何执行
+4. **文件传递机制**：主agent创建subagent时在task_dir中生成 `context.json`，包含所有文件的**绝对路径**
+   **⚠ subagent启动后第一步必须读取context.json**
+   **⚠ 所有文件操作必须使用context.json中的绝对路径**
+**格式示例**：
+```json
+{
+  "task": "任务描述",
+  "work_dir": "/absolute/path/to/plan_dir/",
+  "input_files": {
+    "paper_info": "/absolute/path/to/paper_info.txt"
+  },
+  "output_files": {
+    "pdf": "/absolute/path/to/paper.pdf",
+    "report": "/absolute/path/to/paper_report.md"
+  },
+  "dependencies": ["paper_info.txt必须存在"]
+}
+```
