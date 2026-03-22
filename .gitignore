@@ -33,10 +33,9 @@ tasks/
 
 *.zip
 
-# Multimodal memory code and docs (must be before memory/*)
+# Multimodal memory code and docs (before memory/*)
 !memory/multimodal_memory/
-memory/multimodal_memory/**/*.py
-memory/multimodal_memory/**/*.md
+!memory/multimodal_memory/**
 !memory/multimodal_memory/*.db
 !memory/multimodal_memory/images/
 !memory/multimodal_memory/images/.gitkeep
