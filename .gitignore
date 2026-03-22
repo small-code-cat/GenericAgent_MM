@@ -77,3 +77,8 @@ QUICK_START.md
 # CDP Bridge 密钥配置（首次运行自动生成）
 assets/tmwd_cdp_bridge/config.js
 **log.*
+
+# Multimodal memory data (exclude db and images)
+memory/multimodal_memory/*.db
+memory/multimodal_memory/images/
+!memory/multimodal_memory/images/.gitkeep

@@ -53,6 +53,26 @@ def build_multimodal_content(prompt_text, image_paths):
             print(f"[WARN] encode image failed {path}: {e}")
     return parts
 
+def build_claude_multimodal_content(prompt_text, image_paths):
+    """构建 Anthropic Claude API 格式的多模态内容"""
+    parts = []
+    text = prompt_text if isinstance(prompt_text, str) else str(prompt_text or "")
+    if text.strip():
+        parts.append({"type": "text", "text": text})
+    else:
+        parts.append({"type": "text", "text": "请查看图片并理解用户意图。"})
+    for path in image_paths or []:
+        if not path or not os.path.isfile(path): continue
+        try:
+            mime = mimetypes.guess_type(path)[0] or "image/png"
+            if not mime.startswith("image/"): mime = "image/png"
+            with open(path, "rb") as f:
+                b64data = base64.b64encode(f.read()).decode('ascii')
+            parts.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64data}})
+        except Exception as e:
+            print(f"[WARN] encode image failed {path}: {e}")
+    return parts
+
 class SiderLLMSession:
     def __init__(self, cfg):
         from sider_ai_api import Session   # 不使用sider的话没必要安装这个包
@@ -88,24 +108,43 @@ class ClaudeSession:
     def raw_ask(self, messages, model=None, temperature=0.5, max_tokens=6144):
         model = model or self.default_model
         if 'kimi' in model.lower() or 'moonshot' in model.lower(): temperature = 1.0  # kimi/moonshot only accepts temp 1.0
+        # Anthropic API 要求 system 作为顶层参数，不能放在 messages 中
+        system_content = None
+        api_messages = []
+        for m in messages:
+            if m.get('role') == 'system':
+                system_content = m['content']
+            else:
+                api_messages.append(m)
         headers = {"x-api-key": self.api_key, "Content-Type": "application/json", "anthropic-version": "2023-06-01"}
-        payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
-        try:
-            with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=(5,30)) as r:
-                r.raise_for_status()
-                for line in r.iter_lines():
-                    if not line: continue
-                    line = line.decode("utf-8") if isinstance(line, bytes) else line
-                    if not line.startswith("data:"): continue
-                    data = line[5:].lstrip()
-                    if data == "[DONE]": break
-                    try:
-                        obj = json.loads(data)
-                        if obj.get("type") == "content_block_delta" and obj.get("delta", {}).get("type") == "text_delta":
-                            text = obj["delta"].get("text", "")
-                            if text: yield text
-                    except: pass
-        except Exception as e: yield f"Error: {str(e)}"
+        payload = {"model": model, "messages": api_messages, "temperature": temperature, "max_tokens": max_tokens, "stream": True}
+        if system_content:
+            payload["system"] = system_content
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                with requests.post(auto_make_url(self.api_base, "messages"), headers=headers, json=payload, stream=True, timeout=(10, 120)) as r:
+                    r.raise_for_status()
+                    for line in r.iter_lines():
+                        if not line: continue
+                        line = line.decode("utf-8") if isinstance(line, bytes) else line
+                        if not line.startswith("data:"): continue
+                        data = line[5:].lstrip()
+                        if data == "[DONE]": break
+                        try:
+                            obj = json.loads(data)
+                            if obj.get("type") == "content_block_delta" and obj.get("delta", {}).get("type") == "text_delta":
+                                text = obj["delta"].get("text", "")
+                                if text: yield text
+                        except: pass
+                    return
+            except Exception as e:
+                if attempt < max_retries:
+                    delay = min(30.0, 1.5 * (2 ** attempt))
+                    print(f"[ClaudeSession Retry] {type(e).__name__}, retry in {delay:.1f}s ({attempt+1}/{max_retries+1})")
+                    time.sleep(delay)
+                    continue
+                yield f"Error: {str(e)}"
     def make_messages(self, raw_list):
         trimmed = self._trim_messages(raw_list)
         return [{"role": m['role'], "content": m['prompt']} for m in trimmed]
@@ -184,7 +223,7 @@ class LLMSession:
             if self.reasoning_effort: payload["reasoning"] = {"effort": self.reasoning_effort}
         else:
             url = auto_make_url(self.api_base, "chat/completions")
-            payload = {"model": model, "messages": messages, "temperature": temperature, "stream": True}
+            payload = {"model": model, "messages": messages, "temperature": temperature, "stream": True, "max_tokens": 4096}
             if self.reasoning_effort: payload["reasoning_effort"] = self.reasoning_effort
         for attempt in range(self.max_retries + 1):
             streamed_any = False
@@ -192,13 +231,19 @@ class LLMSession:
                 with requests.post(url, headers=headers, json=payload, stream=True,
                                    timeout=(self.connect_timeout, self.read_timeout), proxies=self.proxies) as r:
                     if r.status_code >= 400:
+                        ct = (r.headers.get("content-type") or "").lower()
+                        is_sse = "text/event-stream" in ct
                         retryable = r.status_code in [408, 409, 425, 429, 500, 502, 503, 504]
                         if retryable and attempt < self.max_retries:
                             delay = self._retry_delay(r, attempt)
                             print(f"[LLM Retry] HTTP {r.status_code}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
                             time.sleep(delay)
                             continue
-                    r.raise_for_status()
+                        if not is_sse:
+                            r.raise_for_status()
+                        else:
+                            print(f"[LLM WARN] HTTP {r.status_code} but content-type is SSE, reading stream anyway.")
+                    http_error_status = r.status_code if r.status_code >= 400 else 0
                     buffer = ''; seen_delta = False
                     for line in r.iter_lines():
                         line = line.decode("utf-8") if isinstance(line, bytes) else line
@@ -259,9 +304,11 @@ class LLMSession:
                 yield f"Error: HTTP {status} {str(e)}; content_type: {ct or '<empty>'}; retry_after: {retry_after or '<empty>'}; request_id: {rid or '<empty>'}; body: {body}"
                 return
             except (requests.Timeout, requests.ConnectionError) as e:
-                if attempt < self.max_retries and not streamed_any:
+                # SSL/代理错误（UNEXPECTED_EOF、connection reset 等）在 streamed 情况下也应重试
+                is_ssl_error = isinstance(e, requests.exceptions.SSLError)
+                if attempt < self.max_retries and (not streamed_any or is_ssl_error):
                     delay = self._retry_delay(None, attempt)
-                    print(f"[LLM Retry] {type(e).__name__}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
+                    print(f"[LLM Retry] {type(e).__name__}{' (SSL/Proxy)' if is_ssl_error else ''}, retry in {delay:.1f}s ({attempt+1}/{self.max_retries+1})")
                     time.sleep(delay)
                     continue
                 yield f"Error: {type(e).__name__}: {str(e)}"
@@ -548,7 +595,7 @@ class ToolClient:
         return self._parse_mixed_response(raw_text)
 
     def _should_use_structured_messages(self, messages):
-        return isinstance(self.backend, LLMSession) and any(isinstance(m.get("content"), list) for m in messages)
+        return isinstance(self.backend, (LLMSession, ClaudeSession)) and any(isinstance(m.get("content"), list) for m in messages)
 
     def _estimate_content_len(self, content):
         if isinstance(content, str): return len(content)
@@ -559,6 +606,8 @@ class ToolClient:
                 if part.get("type") == "text":
                     total += len(part.get("text", ""))
                 elif part.get("type") == "image_url":
+                    total += 1000
+                elif part.get("type") == "image":  # Anthropic format
                     total += 1000
             return total
         return len(str(content))
@@ -613,6 +662,9 @@ class ToolClient:
                         url = (part.get("image_url") or {}).get("url", "")
                         prefix = url.split(",", 1)[0] if url else "data:image/unknown;base64"
                         parts.append({"type": "image_url", "image_url": {"url": prefix + ",<omitted>"}})
+                    elif part.get("type") == "image":  # Anthropic format
+                        media_type = (part.get("source") or {}).get("media_type", "image/unknown")
+                        parts.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": "<omitted>"}})
                     else:
                         parts.append(part)
                 logged.append({"role": msg.get("role"), "content": parts})
@@ -678,8 +730,14 @@ class ToolClient:
                 if args is None: args = data
                 if func_name: tool_calls.append(MockToolCall(func_name, args))
             except json.JSONDecodeError as e:
-                errors.append({'err': f"[Warn] Failed to parse tool_use JSON: {json_str}", 'bad_json': f'Failed to parse tool_use JSON: {json_str[:200]}'})
-                self.last_tools = ''   # llm肯定忘了tool schema了，再提供下
+                # 尝试从残缺JSON中恢复code_run调用
+                recovered = _try_recover_code_tool(json_str)
+                if recovered:
+                    tool_calls.append(recovered)
+                    print(f'[Info] Recovered truncated code_run from malformed JSON')
+                else:
+                    errors.append({'err': f"[Warn] Failed to parse tool_use JSON: {json_str}", 'bad_json': f'Failed to parse tool_use JSON: {json_str[:200]}'})
+                    self.last_tools = ''   # llm肯定忘了tool schema了，再提供下
             except Exception as e:
                 errors.append({'err': f'[Warn] Exception during tool_use parsing: {str(e)} {str(data)}'})
         if len(tool_calls) == 0:
@@ -695,6 +753,56 @@ def _write_llm_log(label, content):
     with open(log_path, 'a', encoding='utf-8', errors='replace') as f:
         f.write(f"=== {label} === {ts}\n{content}\n\n")
 
+def _try_recover_code_tool(json_str):
+    """当JSON解析失败时，尝试用正则从残缺JSON中恢复code_run/code等工具调用"""
+    # 检查是否包含 code_run 相关特征
+    name_m = re.search(r'"name"\s*:\s*"(code_run|code)"', json_str)
+    if not name_m:
+        return None
+    func_name = name_m.group(1)
+    # 尝试提取 code 字段内容（贪婪匹配到最后可能的位置）
+    code_m = re.search(r'"code"\s*:\s*"(.*)', json_str, re.DOTALL)
+    if not code_m:
+        # 没有code字段，可能只是普通的截断，尝试构造最小调用
+        return MockToolCall(func_name, {})
+    raw_code = code_m.group(1)
+    # 去掉尾部可能的 ", }, } 等残留
+    raw_code = re.sub(r'["\s,}\]]*$', '', raw_code)
+    # 反转义JSON字符串中的转义字符
+    try:
+        code = raw_code.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\')
+    except:
+        code = raw_code
+    # 提取 type 字段
+    type_m = re.search(r'"type"\s*:\s*"(python|bash)"', json_str)
+    code_type = type_m.group(1) if type_m else 'python'
+    # 提取 timeout 字段
+    timeout_m = re.search(r'"timeout"\s*:\s*(\d+)', json_str)
+    timeout = int(timeout_m.group(1)) if timeout_m else 60
+    args = {'type': code_type, 'timeout': timeout, 'code': code}
+    return MockToolCall(func_name, args)
+
+def _repair_truncated_json(json_str):
+    """尝试修复截断的JSON字符串"""
+    s = json_str.rstrip()
+    # 尝试关闭未闭合的字符串和括号
+    in_string = False; escape = False
+    brace_depth = 0; bracket_depth = 0
+    for ch in s:
+        if escape: escape = False; continue
+        if ch == '\\': escape = True; continue
+        if ch == '"': in_string = not in_string; continue
+        if in_string: continue
+        if ch == '{': brace_depth += 1
+        elif ch == '}': brace_depth -= 1
+        elif ch == '[': bracket_depth += 1
+        elif ch == ']': bracket_depth -= 1
+    # 修复：关闭未闭合的部分
+    if in_string: s += '"'
+    s += ']' * max(0, bracket_depth)
+    s += '}' * max(0, brace_depth)
+    return s
+
 def tryparse(json_str):
     try: return json.loads(json_str)
     except: pass
@@ -704,7 +812,13 @@ def tryparse(json_str):
     try: return json.loads(json_str[:-1])
     except: pass
     if '}' in json_str: json_str = json_str[:json_str.rfind('}') + 1]
-    return json.loads(json_str)
+    try: return json.loads(json_str)
+    except: pass
+    # 尝试修复截断的JSON
+    repaired = _repair_truncated_json(json_str)
+    try: return json.loads(repaired)
+    except: pass
+    raise json.JSONDecodeError('Failed after all repair attempts', json_str, 0)
 
 
 class NativeToolClient:

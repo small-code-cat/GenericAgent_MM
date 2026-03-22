@@ -250,6 +250,9 @@ class GenericAgentHandler(BaseHandler):
         self.cwd = cwd;  self.current_turn = 0
         self.history_info = last_history if last_history else []
         self.code_stop_signal = []
+        self.has_images = False        # 当前任务是否包含用户上传的图片
+        self.image_paths = []          # 用户上传图片的实际文件路径列表
+        self.images_memorized = False  # 是否已完成多模态记忆存储
 
     def _get_abs_path(self, path):
         if not path: return ""
@@ -265,6 +268,12 @@ class GenericAgentHandler(BaseHandler):
             if type(ret.next_prompt) is str:
                 ret.next_prompt += "\nPROTOCOL_VIOLATION: 上一轮遗漏了<summary>。 我已根据物理动作自动补全。请务必在下次回复中记得<summary>协议。" 
         self.history_info.append('[Agent] ' + smart_format(summary, max_str_len=100))
+        # 追踪多模态记忆：检测是否在code_run中调用了memorize
+        if tool_name == 'code_run' and getattr(self, 'has_images', False) and not getattr(self, 'images_memorized', False):
+            code_content = getattr(response, 'content', '') or ''
+            # 放宽检测：只要代码中包含 memorize 调用即可（不再要求同时包含 mm_memory）
+            if 'memorize' in code_content:
+                self.images_memorized = True
 
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。
@@ -454,7 +463,9 @@ class GenericAgentHandler(BaseHandler):
                     "并明确是否还需要额外的实际操作。"
                 )
                 return StepOutcome({}, next_prompt=next_prompt, should_exit=False)
-        # 3. 正常情况：直接将回复返回给用户并结束循环
+        # 3. 多模态记忆：不再强制检查，由规则11在prompt层面引导Agent自行判断图片是否与用户个人相关
+        #    （用户未明确表示关系则默认无关，无关则不存不查）
+        # 4. 正常情况：直接将回复返回给用户并结束循环
         yield "[Info] Final response to user.\n"
         return StepOutcome(response, next_prompt=None, should_exit=True)
     

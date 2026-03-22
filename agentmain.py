@@ -5,7 +5,7 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 elif hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(errors='replace')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, XaiSession, NativeToolClient, NativeClaudeSession, build_multimodal_content
+from llmcore import SiderLLMSession, LLMSession, ToolClient, ClaudeSession, XaiSession, NativeToolClient, NativeClaudeSession, build_multimodal_content, build_claude_multimodal_content
 from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error
 
@@ -97,12 +97,36 @@ class GeneraticAgent:
                 handler.working['passed_sessions'] = ps = self.handler.working.get('passed_sessions', 0) + 1
                 if ps > 0: handler.working['key_info'] += f'\n[SYSTEM] 此为 {ps} 个对话前设置的key_info，若已在新任务，先更新或清除工作记忆。\n'
             self.handler = handler
+            handler.has_images = bool(images)
+            handler.images_memorized = False
+            # 将上传的图片复制到永久目录，避免 temp/uploads/ 中的文件被覆盖或过期
+            preserved_paths = []
+            if images:
+                import shutil, time as _time
+                preserved_dir = os.path.join(script_dir, 'temp', 'preserved_uploads')
+                os.makedirs(preserved_dir, exist_ok=True)
+                for img_path in images:
+                    if os.path.isfile(img_path):
+                        ext = os.path.splitext(img_path)[1] or '.jpg'
+                        ts = _time.strftime('%Y%m%d_%H%M%S')
+                        new_name = f"upload_{ts}_{os.path.basename(img_path)}"
+                        dst = os.path.join(preserved_dir, new_name)
+                        shutil.copy2(img_path, dst)
+                        preserved_paths.append(dst)
+                        print(f"[INFO] 已将上传图片复制到永久路径: {dst}")
+                    else:
+                        preserved_paths.append(img_path)  # 文件不存在时保留原路径
+            handler.image_paths = preserved_paths or images or []  # 追踪是否有用户上传的图片，用于多模态记忆强制检查
             user_input = raw_query
             if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
                 user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
+            if preserved_paths:
+                user_input += "\n\n[image_paths]\n" + "\n".join(preserved_paths)
             initial_user_content = None
             if images and isinstance(self.llmclient.backend, LLMSession):
                 initial_user_content = build_multimodal_content(user_input, images)
+            elif images and isinstance(self.llmclient.backend, ClaudeSession):
+                initial_user_content = build_claude_multimodal_content(user_input, images)
             elif images:
                 print(f"[INFO] backend {type(self.llmclient.backend).__name__} does not support direct multimodal input, fallback to text attachment hints.")
             gen = agent_runner_loop(self.llmclient, sys_prompt, user_input, 
