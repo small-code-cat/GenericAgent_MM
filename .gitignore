@@ -33,8 +33,15 @@ tasks/
 
 *.zip
 
+# Multimodal memory code and docs (must be before memory/*)
+!memory/multimodal_memory/
+memory/multimodal_memory/**/*.py
+memory/multimodal_memory/**/*.md
+!memory/multimodal_memory/*.db
+!memory/multimodal_memory/images/
+!memory/multimodal_memory/images/.gitkeep
+
 memory/*
-!memory/memory_management_sop.md
 
 # Allow tracking of specific SOPs
 !memory/web_setup_sop.md
