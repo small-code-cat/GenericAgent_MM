@@ -85,9 +85,11 @@ class GeneraticAgent:
             task = self.task_queue.get()
             self.is_running = True
             raw_query, source, images, display_queue = task["query"], task["source"], task.get("images") or [], task["output"]
-            rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
+            # rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
+            rquery = raw_query
+            if images:
+                rquery += "\n\n[image_paths]\n" + "\n".join(images)
             self.history.append(f"[USER]: {rquery}")
-            
             sys_prompt = get_system_prompt()
             script_dir = os.path.dirname(os.path.abspath(__file__))
             handler = GenericAgentHandler(None, self.history, os.path.join(script_dir, 'temp'))
@@ -97,31 +99,13 @@ class GeneraticAgent:
                 handler.working['passed_sessions'] = ps = self.handler.working.get('passed_sessions', 0) + 1
                 if ps > 0: handler.working['key_info'] += f'\n[SYSTEM] 此为 {ps} 个对话前设置的key_info，若已在新任务，先更新或清除工作记忆。\n'
             self.handler = handler
-            handler.has_images = bool(images)
-            handler.images_memorized = False
-            # 将上传的图片复制到永久目录，避免 temp/uploads/ 中的文件被覆盖或过期
-            preserved_paths = []
-            if images:
-                import shutil, time as _time
-                preserved_dir = os.path.join(script_dir, 'temp', 'preserved_uploads')
-                os.makedirs(preserved_dir, exist_ok=True)
-                for img_path in images:
-                    if os.path.isfile(img_path):
-                        ext = os.path.splitext(img_path)[1] or '.jpg'
-                        ts = _time.strftime('%Y%m%d_%H%M%S')
-                        new_name = f"upload_{ts}_{os.path.basename(img_path)}"
-                        dst = os.path.join(preserved_dir, new_name)
-                        shutil.copy2(img_path, dst)
-                        preserved_paths.append(dst)
-                        print(f"[INFO] 已将上传图片复制到永久路径: {dst}")
-                    else:
-                        preserved_paths.append(img_path)  # 文件不存在时保留原路径
-            handler.image_paths = preserved_paths or images or []  # 追踪是否有用户上传的图片，用于多模态记忆强制检查
             user_input = raw_query
             if source == 'feishu' and len(self.history) > 1:   # 如果有历史记录且来自飞书，注入到首轮 user_input 中（支持/restore恢复上下文）
                 user_input = handler._get_anchor_prompt() + f"\n\n### 用户当前消息\n{raw_query}"
-            if preserved_paths:
-                user_input += "\n\n[image_paths]\n" + "\n".join(preserved_paths)
+            
+            if images:
+                user_input += "\n\n[image_paths]\n" + "\n".join(images)
+            
             initial_user_content = None
             if images and isinstance(self.llmclient.backend, LLMSession):
                 initial_user_content = build_multimodal_content(user_input, images)

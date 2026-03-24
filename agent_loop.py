@@ -47,6 +47,8 @@ def get_pretty_json(data):
     return json.dumps(data, indent=2, ensure_ascii=False).replace('\\n', '\n')
 
 def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, max_turns=15, verbose=True, initial_user_content=None):
+    # Extract image parts from multimodal content to persist across turns
+    _image_parts = [p for p in (initial_user_content or []) if isinstance(p, dict) and p.get("type") in ("image_url", "image")] if isinstance(initial_user_content, list) else []
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
@@ -91,5 +93,16 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
                 next_prompt += f"<tool_result>\n{datastr}\n</tool_result>\n\n"
             next_prompt += outcome.next_prompt
         next_prompt = handler.next_prompt_patcher(next_prompt, None, turn+1)
-        messages = [{"role": "user", "content": next_prompt}]
+        if _image_parts and user_input in next_prompt:
+            # 将图片插入到用户原始query后面，而非拼在末尾
+            split_pos = next_prompt.index(user_input) + len(user_input)
+            text_before = next_prompt[:split_pos]
+            text_after = next_prompt[split_pos:]
+            content = [{"type": "text", "text": text_before}] + _image_parts
+            if text_after.strip(): content.append({"type": "text", "text": text_after})
+            messages = [{"role": "user", "content": content}]
+        elif _image_parts:
+            messages = [{"role": "user", "content": [{"type": "text", "text": next_prompt}] + _image_parts}]
+        else:
+            messages = [{"role": "user", "content": next_prompt}]
     return {'result': 'MAX_TURNS_EXCEEDED'}

@@ -102,15 +102,27 @@ def memorize(content: str = "",
     if image_path:
         image_path = str(image_path)
 
-    # ── 查重：recall检索，按group计算平均分，≥0.8则跳过存储 ──
-    _dedup_query = content or ""
-    _dedup_results = []
-    if _dedup_query:
+    # ── 查重：分维度recall检索，按group取最高分，≥0.8则跳过 ──
+    # 纯文本：文本最高分≥0.8 → 跳过
+    # 纯图片：图片最高分≥0.8 → 跳过
+    # 图文混合：文本最高分≥0.8 且 图片最高分≥0.8 → 才跳过
+    _has_text = bool(content)
+    _has_image = bool(image_path)
+    _text_group_max = {}   # {group_id: max_score}
+    _image_group_max = {}  # {group_id: max_score}
+
+    # 文本维度查重
+    if _has_text:
         try:
-            _dedup_results = get_engine().recall(_dedup_query, top_k=10, threshold=0.35, expand_groups=True)
+            _text_results = get_engine().recall(content, top_k=10, threshold=0.35, expand_groups=False)
+            for _r in _text_results:
+                if _r.group_id:
+                    _text_group_max[_r.group_id] = max(_text_group_max.get(_r.group_id, 0), _r.score)
         except Exception:
             pass
-    elif image_path:
+
+    # 图片维度查重
+    if _has_image:
         try:
             import os as _os
             if _os.path.isfile(image_path):
@@ -118,21 +130,41 @@ def memorize(content: str = "",
                     _img_bytes = _f.read()
                 _ext = _os.path.splitext(image_path)[1].lower()
                 _mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
-                _dedup_results = get_engine().recall("", image_data=_img_bytes, mime_type=_mime_map.get(_ext, "image/png"),
-                                                     top_k=10, threshold=0.35, expand_groups=True)
+                _img_results = get_engine().recall("", image_data=_img_bytes, mime_type=_mime_map.get(_ext, "image/png"),
+                                                    top_k=10, threshold=0.35, expand_groups=False)
+                for _r in _img_results:
+                    if _r.group_id:
+                        _image_group_max[_r.group_id] = max(_image_group_max.get(_r.group_id, 0), _r.score)
         except Exception:
             pass
-    if _dedup_results:
-        from collections import defaultdict
-        _group_scores = defaultdict(list)
-        for _r in _dedup_results:
-            if _r.group_id:
-                _group_scores[_r.group_id].append(_r.score)
-        for _gid, _scores in _group_scores.items():
-            _avg = sum(_scores) / len(_scores)
-            if _avg >= 0.8:
-                print(f"[mm_memory] 查重跳过：group {_gid} 平均分 {_avg:.3f} >= 0.8，已有相似记忆")
-                return f"[记忆跳过] 已存在相似记忆(group={_gid}, 相似度={_avg:.2f})，无需重复存储。"
+
+    # 判断是否跳过
+    _skip_gid = None
+    _skip_score = None
+    if _has_text and _has_image:
+        # 图文混合：需要两个维度都≥0.8（同一group或不同group均可）
+        _text_max = max(_text_group_max.values()) if _text_group_max else 0
+        _image_max = max(_image_group_max.values()) if _image_group_max else 0
+        if _text_max >= 0.8 and _image_max >= 0.8:
+            # 优先报告文本匹配的group
+            _skip_gid = max(_text_group_max, key=_text_group_max.get)
+            _skip_score = min(_text_max, _image_max)  # 报告较低的那个分数
+    elif _has_text:
+        # 纯文本：文本最高分≥0.8
+        for _gid, _score in _text_group_max.items():
+            if _score >= 0.8:
+                _skip_gid, _skip_score = _gid, _score
+                break
+    elif _has_image:
+        # 纯图片：图片最高分≥0.8
+        for _gid, _score in _image_group_max.items():
+            if _score >= 0.8:
+                _skip_gid, _skip_score = _gid, _score
+                break
+
+    if _skip_gid is not None:
+        print(f"[mm_memory] 查重跳过：group {_skip_gid} 最高分 {_skip_score:.3f} >= 0.8，已有相似记忆")
+        return f"[记忆跳过] 已存在相似记忆(group={_skip_gid}, 相似度={_skip_score:.2f})，无需重复存储。"
 
     items = get_engine().memorize(content, image_path=image_path, context=context, auto_extract=auto_extract)
     # 构建 agent 友好的结果摘要

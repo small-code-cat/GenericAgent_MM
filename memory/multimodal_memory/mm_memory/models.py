@@ -117,8 +117,7 @@ class SearchResult:
         return d
 
     def __repr__(self):
-        content_preview = self.item.content[:50] + "..." if len(self.item.content) > 50 else self.item.content
-        return f"SearchResult(score={self.score:.3f}, content={content_preview!r})"
+        return f"SearchResult(score={self.score:.3f}, content={self.item.content!r})"
 
 
 # ── 智能眼镜场景：以用户为中心的语义实体 ─────────────────

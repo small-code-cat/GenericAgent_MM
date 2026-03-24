@@ -241,6 +241,84 @@ html, body { height:100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe
   .inline-mem-col:first-child { border-right:none; border-bottom:1px solid var(--border-color); }
 }
 
+/* Thinking & Summary Blocks */
+.thinking-block {
+  background: rgba(255,255,255,.03);
+  border-left: 3px solid rgba(150,150,170,.4);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 16px;
+  margin: 8px 0;
+  font-size: .85em;
+  color: var(--text-secondary);
+  font-style: italic;
+  line-height: 1.6;
+  opacity: 0.75;
+}
+.thinking-block .thinking-label {
+  font-size: .75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: rgba(150,150,170,.7);
+  margin-bottom: 6px;
+  font-style: normal;
+}
+.thinking-block p { margin: 4px 0; }
+
+.summary-block {
+  background: linear-gradient(135deg, rgba(99,102,241,.06), rgba(139,92,246,.06));
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 16px;
+  margin: 8px 0;
+  font-size: .9em;
+  font-weight: 500;
+  color: var(--accent);
+  line-height: 1.5;
+}
+.summary-block .summary-label {
+  font-size: .75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: rgba(99,102,241,.6);
+  margin-bottom: 4px;
+}
+.summary-block p { margin: 4px 0; }
+
+/* Tool Use Block */
+.tool-use-block {
+  background: rgba(16,185,129,.04);
+  border-left: 3px solid rgba(16,185,129,.5);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 16px;
+  margin: 8px 0;
+  font-size: .85em;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.tool-use-block .tool-use-label {
+  font-size: .75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: rgba(16,185,129,.8);
+  margin-bottom: 6px;
+}
+.tool-use-block pre {
+  background: rgba(0,0,0,.2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 6px 0 2px;
+  overflow-x: auto;
+  font-size: .95em;
+}
+.tool-use-block code {
+  color: rgba(16,185,129,.9);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.tool-use-block p { margin: 4px 0; }
+
 /* Responsive */
 @media (max-width:768px) {
   .sidebar { position:absolute; height:100%; }
@@ -382,7 +460,95 @@ function escapeHtml(s) {
 }
 
 function renderMarkdown(text) {
+  // === Placeholder-based block extraction to prevent nesting ===
+  const _blocks = {};
+  let _bid = 0;
+  function _ph(id) { return '%%BLOCK_' + id + '%%'; }
+
+  // Pass 1: Extract all closed blocks (multi-pass to handle nesting: inner first)
+  let _changed = true;
+  while (_changed) {
+    _changed = false;
+    text = text.replace(/<thinking>([\s\S]*?)<\/thinking>/gi, (m, c) => {
+      const id = _bid++; _blocks[id] = {type:'thinking', content:c.trim()}; _changed = true; return '\n' + _ph(id) + '\n';
+    });
+    text = text.replace(/<summary>([\s\S]*?)<\/summary>/gi, (m, c) => {
+      const id = _bid++; _blocks[id] = {type:'summary', content:c.trim()}; _changed = true; return '\n' + _ph(id) + '\n';
+    });
+    text = text.replace(/<tool_use>([\s\S]*?)<\/tool_use>/gi, (m, c) => {
+      const id = _bid++; _blocks[id] = {type:'tool_use', content:c.trim()}; _changed = true; return '\n' + _ph(id) + '\n';
+    });
+  }
+
+  // Pass 2: Handle unclosed tags (streaming) — only the LAST unclosed one
+  if (/<thinking>(?![\s\S]*<\/thinking>)/i.test(text)) {
+    text = text.replace(/<thinking>([\s\S]*)$/i, (m, c) => {
+      const id = _bid++; _blocks[id] = {type:'thinking', content:c.trim()}; return '\n' + _ph(id) + '\n';
+    });
+  }
+  if (/<summary>(?![\s\S]*<\/summary>)/i.test(text)) {
+    text = text.replace(/<summary>([\s\S]*)$/i, (m, c) => {
+      const id = _bid++; _blocks[id] = {type:'summary', content:c.trim()}; return '\n' + _ph(id) + '\n';
+    });
+  }
+  if (/<tool_use>(?![\s\S]*<\/tool_use>)/i.test(text)) {
+    text = text.replace(/<tool_use>([\s\S]*)$/i, (m, c) => {
+      const id = _bid++; _blocks[id] = {type:'tool_use', content:c.trim()}; return '\n' + _ph(id) + '\n';
+    });
+  }
+
+  // Pass 3: Render main text with marked
   let html = marked.parse(text);
+
+  // Pass 4: Render each block's content to HTML (without expanding inner placeholders yet)
+  const _renderedBlocks = {};
+  for (const [id, block] of Object.entries(_blocks)) {
+    if (block.type === 'thinking') {
+      const inner = marked.parse(block.content);
+      _renderedBlocks[id] = '<div class="thinking-block"><div class="thinking-label">💭 Thinking</div>' + inner + '</div>';
+    } else if (block.type === 'summary') {
+      const inner = marked.parse(block.content);
+      _renderedBlocks[id] = '<div class="summary-block"><div class="summary-label">📋 Summary</div>' + inner + '</div>';
+    } else if (block.type === 'tool_use') {
+      let content = block.content;
+      let label = '🔧 Tool Use';
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.name) label = '🔧 ' + parsed.name;
+        content = '```json\n' + JSON.stringify(parsed, null, 2) + '\n```';
+      } catch(e) {
+        if (content.startsWith('{')) {
+          content = '```json\n' + content + '\n```';
+        }
+      }
+      const inner = marked.parse(content);
+      _renderedBlocks[id] = '<div class="tool-use-block"><div class="tool-use-label">' + label + '</div>' + inner + '</div>';
+    }
+  }
+
+  // Pass 5: Replace placeholders in all rendered blocks AND main html (multi-pass for nesting)
+  // Process from highest ID to lowest (outer blocks first, then inner)
+  const _ids = Object.keys(_renderedBlocks).map(Number).sort((a, b) => b - a);
+  for (let pass = 0; pass < _ids.length + 1; pass++) {
+    for (const id of _ids) {
+      const phPattern = _ph(id);
+      const phInP = new RegExp('<p>' + phPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<\\/p>', 'g');
+      const phPlain = new RegExp(phPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+      // Replace in main html
+      html = html.replace(phInP, _renderedBlocks[id]);
+      html = html.replace(phPlain, _renderedBlocks[id]);
+      // Also replace in all other rendered blocks (for nesting)
+      for (const otherId of _ids) {
+        if (otherId !== id) {
+          _renderedBlocks[otherId] = _renderedBlocks[otherId].replace(phInP, _renderedBlocks[id]);
+          _renderedBlocks[otherId] = _renderedBlocks[otherId].replace(phPlain, _renderedBlocks[id]);
+        }
+      }
+    }
+  }
+
+  // Clean up any orphan placeholders
+  html = html.replace(/%%BLOCK_\d+%%/g, '');
   // Add code headers with copy buttons
   html = html.replace(/<pre><code class="language-(\w+)">/g,
     '<pre><div class="code-header"><span>$1</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div><code class="language-$1">');

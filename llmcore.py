@@ -147,12 +147,23 @@ class ClaudeSession:
                 yield f"Error: {str(e)}"
     def make_messages(self, raw_list):
         trimmed = self._trim_messages(raw_list)
-        return [{"role": m['role'], "content": m['prompt']} for m in trimmed]
-    def ask(self, prompt, model=None, stream=False):
+        messages = []
+        for i, m in enumerate(trimmed):
+            if m.get('image') and i >= len(trimmed) - 2:
+                messages.append({"role": m['role'], "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": m['image']}},
+                    {"type": "text", "text": m['prompt']}
+                ]})
+            else:
+                messages.append({"role": m['role'], "content": m['prompt']})
+        return messages
+    def ask(self, prompt, model=None, stream=False, image_base64=None):
         def _ask_gen():
             content = ''
             with self.lock:
-                self.raw_msgs.append({"role": "user", "prompt": prompt})
+                entry = {"role": "user", "prompt": prompt}
+                if image_base64: entry["image"] = image_base64
+                self.raw_msgs.append(entry)
                 messages = self.make_messages(self.raw_msgs)
             for chunk in self.raw_ask(messages, model):
                 content += chunk; yield chunk
@@ -573,16 +584,12 @@ class ToolClient:
         self.total_cd_tokens = 0
 
     def chat(self, messages, tools=None):
-        if self._should_use_structured_messages(messages):
-            backend_messages = self._build_backend_messages(messages, tools)
-            print("Structured prompt length:", sum(self._estimate_content_len(m.get("content")) for m in backend_messages), 'chars')
-            prompt_log = self._serialize_messages_for_log(backend_messages)
-            gen = self.backend.raw_ask(backend_messages)
-        else:
-            full_prompt = self._build_protocol_prompt(messages, tools)
-            print("Full prompt length:", len(full_prompt), 'chars')
-            prompt_log = full_prompt
-            gen = self.backend.ask(full_prompt, stream=True)
+        is_multimodal = self._should_use_structured_messages(messages)
+        image_base64 = self._extract_image_from_messages(messages) if is_multimodal else None
+        full_prompt = self._build_protocol_prompt(messages, tools)
+        print("Full prompt length:", len(full_prompt), 'chars', '[+image]' if image_base64 else '')
+        prompt_log = full_prompt + ('\n[Image attached]' if image_base64 else '')
+        gen = self.backend.ask(full_prompt, stream=True, image_base64=image_base64)
         _write_llm_log('Prompt', prompt_log)
         raw_text = ''; summarytag = '[NextWillSummary]'
         for chunk in gen:
@@ -596,6 +603,20 @@ class ToolClient:
 
     def _should_use_structured_messages(self, messages):
         return isinstance(self.backend, (LLMSession, ClaudeSession)) and any(isinstance(m.get("content"), list) for m in messages)
+
+    def _extract_image_from_messages(self, messages):
+        """Extract base64 image data from the last user message's multimodal content."""
+        for m in reversed(messages):
+            if m.get('role') == 'user' and isinstance(m.get('content'), list):
+                for part in m['content']:
+                    if not isinstance(part, dict): continue
+                    if part.get('type') == 'image_url':
+                        url = (part.get('image_url') or {}).get('url', '')
+                        if ',' in url: return url.split(',', 1)[1]
+                    elif part.get('type') == 'image':
+                        return (part.get('source') or {}).get('data', '')
+                break
+        return None
 
     def _estimate_content_len(self, content):
         if isinstance(content, str): return len(content)
@@ -682,7 +703,10 @@ class ToolClient:
         prompt += f"{tool_instruction}\n\n"
         for m in history_msgs:
             role = "USER" if m['role'] == 'user' else "ASSISTANT"
-            prompt += f"=== {role} ===\n{m['content']}\n\n"
+            content = m['content']
+            if isinstance(content, list):
+                content = '\n'.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type') == 'text')
+            prompt += f"=== {role} ===\n{content}\n\n"
             self.total_cd_tokens += self._estimate_content_len(m['content'])
             
         if self.total_cd_tokens > 6000: self.last_tools = ''

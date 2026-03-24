@@ -307,7 +307,7 @@ class MemoryEngine:
     def recall(self, query: str = "",
                image_data: Optional[bytes] = None,
                mime_type: str = "image/png",
-               top_k: int = 5, threshold: float = 0.35,
+               top_k: int = 5, threshold: float = 0.4,
                source_type: Optional[str] = None,
                expand_groups: bool = True) -> List[SearchResult]:
         """多模态语义检索记忆
@@ -407,12 +407,9 @@ class MemoryEngine:
                         )
                         scored[exp_item.id] = (exp_score, exp_item)
 
-        # ── 6) 去重 & 组装最终结果 ──
+        # ── 6) 组装最终结果 & Group 平均分过滤 ──
         final_results: List[SearchResult] = []
         for item_id, (score, item) in scored.items():
-            # 扩展项免阈值过滤（它们是通过 group 关联进来的，不是直接匹配）
-            if item_id not in expanded_ids and score < threshold:
-                continue
             final_results.append(SearchResult(
                 item=item,
                 score=score,
@@ -420,6 +417,26 @@ class MemoryEngine:
             ))
 
         final_results.sort(key=lambda r: r.score, reverse=True)
+
+        # Group 平均分过滤：扩展项不参与平均分计算，只用直接命中项的分数判断组相关性
+        from collections import defaultdict
+        group_scores: dict[str, list[float]] = defaultdict(list)
+        for r in final_results:
+            # 扩展项是「搭便车」跟着命中项返回的，不应反过来影响组是否保留的判断
+            if r.item.id in expanded_ids:
+                continue
+            group_scores[r.item.group_id].append(r.score)
+
+        passing_groups = set()
+        for gid, scores in group_scores.items():
+            if not scores:
+                continue
+            avg = sum(scores) / len(scores)
+            if avg >= threshold:
+                passing_groups.add(gid)
+
+        final_results = [r for r in final_results if r.item.group_id in passing_groups]
+
         return final_results
 
     @staticmethod
