@@ -6,11 +6,9 @@ except: pass
 try: sys.stderr.reconfigure(errors='replace')
 except: pass
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'memory', 'multimodal_memory'))
 
 from flask import Flask, request, Response, jsonify, send_from_directory, send_file
 from agentmain import GeneraticAgent
-from mm_memory import list_memories, forget_group, recall as mm_recall, get_group
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=os.path.join(script_dir, 'webui'), static_url_path='/static')
@@ -162,93 +160,6 @@ def reinject_prompt():
     ag = get_agent()
     ag.llmclient.last_tools = ''
     return jsonify({'ok': True})
-
-# ── 记忆管理 API ──────────────────────────────────────────
-
-@app.route('/api/memory/list')
-def memory_list():
-    """列出所有记忆，按 group_id 分组返回"""
-    limit = request.args.get('limit', 200, type=int)
-    items = list_memories(limit=limit)
-    # 按 group_id 分组
-    groups = {}
-    for item in items:
-        d = item.to_dict()
-        d.pop('embedding', None)  # 不传 embedding 到前端
-        gid = d['group_id']
-        if gid not in groups:
-            groups[gid] = {'group_id': gid, 'created_at': d['created_at'],
-                           'knowledge': [], 'sources': []}
-        if d['embed_type'] == 'knowledge':
-            groups[gid]['knowledge'].append(d)
-        else:
-            groups[gid]['sources'].append(d)
-        # 更新组时间为最早的
-        groups[gid]['created_at'] = min(groups[gid]['created_at'], d['created_at'])
-    # 按时间倒序
-    result = sorted(groups.values(), key=lambda g: g['created_at'], reverse=True)
-    return jsonify(result)
-
-
-@app.route('/api/memory/image')
-def memory_image():
-    """提供本地图片文件访问"""
-    path = request.args.get('path', '')
-    if not path or not os.path.isfile(path):
-        return 'Not found', 404
-    # 安全：只允许图片扩展名
-    ext = os.path.splitext(path)[1].lower()
-    if ext not in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'):
-        return 'Forbidden', 403
-    return send_file(path)
-
-
-@app.route('/api/memory/delete/<group_id>', methods=['DELETE'])
-def memory_delete(group_id):
-    """删除一组记忆"""
-    count = forget_group(group_id)
-    return jsonify({'deleted': count})
-
-
-@app.route('/api/memory/recall')
-def memory_recall():
-    """语义检索记忆，返回与查询相关的记忆（按 group 去重聚合）"""
-    query = request.args.get('query', '')
-    top_k = request.args.get('top_k', 5, type=int)
-    threshold = request.args.get('threshold', 0.35, type=float)
-    if not query:
-        return jsonify([])
-    results = mm_recall(query, top_k=top_k, threshold=threshold)
-    # 按 group_id 聚合，保留最高 score
-    groups = {}
-    for r in results:
-        d = r.to_dict()
-        d['item'].pop('embedding', None)
-        gid = d['item']['group_id']
-        if gid not in groups:
-            # 获取完整 group 信息
-            group_items = get_group(gid)
-            group_data = {
-                'group_id': gid,
-                'score': d['score'],
-                'match_reason': d['match_reason'],
-                'knowledge': [],
-                'sources': [],
-                'created_at': d['item']['created_at'],
-            }
-            for gi in group_items:
-                gi_d = gi.to_dict()
-                gi_d.pop('embedding', None)
-                if gi.embed_type == 'knowledge':
-                    group_data['knowledge'].append(gi_d)
-                else:
-                    group_data['sources'].append(gi_d)
-            groups[gid] = group_data
-        else:
-            groups[gid]['score'] = max(groups[gid]['score'], d['score'])
-    # 按 score 降序
-    result = sorted(groups.values(), key=lambda g: g['score'], reverse=True)
-    return jsonify(result)
 
 
 if __name__ == '__main__':
