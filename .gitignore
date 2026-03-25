@@ -84,6 +84,14 @@ memory/skill_search/**/__pycache__/
 # ADB UI tool
 !memory/adb_ui.py
 
+# Global memory files
+!memory/global_mem_insight.txt
+!memory/global_mem.txt
+
+# Multimodal memory SOP
+!memory/multimodal_memory/
+!memory/multimodal_memory/mm_memory_sop.md
+
 # Visual Studio
 .vs/
 restore_commit.txt
