@@ -8,7 +8,7 @@
 
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
-L2: 现空
+L2: 环境(OS/浏览器)
 L3: web_setup_sop | autonomous_operation_sop | scheduled_task_sop | ljqCtrl_sop+.py | tmwebdriver_sop | subagent_sop | plan_sop | mem_scanner.py | adb_ui.py | multimodal_memory/mm_memory_sop
 
 [RULES]

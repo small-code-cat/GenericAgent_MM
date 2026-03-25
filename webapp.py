@@ -1,4 +1,4 @@
-import os, sys, json, time, threading, queue, base64, uuid
+import os, sys, json, time, threading, queue, base64, uuid, logging
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 try: sys.stdout.reconfigure(errors='replace')
@@ -17,6 +17,13 @@ app = Flask(__name__, static_folder=os.path.join(script_dir, 'webui'), static_ur
 # 大图 base64 塞进 JSON 会很大；默认提高上限，避免 413 / 连接被掐断
 _max_mb = int(os.environ.get("MAX_UPLOAD_MB", "48"))
 app.config["MAX_CONTENT_LENGTH"] = max(8, _max_mb) * 1024 * 1024
+
+# 过滤 /api/status 轮询日志，避免刷屏
+class _NoStatusLog(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        return 'GET /api/status' not in msg
+logging.getLogger('werkzeug').addFilter(_NoStatusLog())
 
 
 @app.errorhandler(413)
