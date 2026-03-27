@@ -273,6 +273,7 @@ html, body { height:100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe
       <div class="sidebar-label">控制</div>
       <button class="sidebar-btn danger" onclick="abortTask()">⏹ 强行停止任务</button>
       <button class="sidebar-btn" onclick="reinjectPrompt()">🔄 重新注入 System Prompt</button>
+      <button class="sidebar-btn" onclick="window.open('token_stats.html','_blank')">📊 Token 用量统计</button>
 </div>
 
     <div class="sidebar-section">
@@ -339,46 +340,92 @@ let cameraActive = false;
 let recognition = null;
 let isRecording = false;
 
-// ===== Chat Cache =====
+// ===== Chat Cache (IndexedDB) =====
 const MAX_CACHE_MESSAGES = 200;
-function saveChatHistory() {
-  try {
-    const inner = document.getElementById('chatInner');
-    let msgs = messages;
-    let html = inner.innerHTML;
-    if (msgs.length > MAX_CACHE_MESSAGES) {
-      msgs = msgs.slice(-MAX_CACHE_MESSAGES);
-      const tmp = document.createElement('div');
-      tmp.innerHTML = html;
-      const msgDivs = tmp.querySelectorAll('.message');
-      const excess = msgDivs.length - MAX_CACHE_MESSAGES;
-      for (let i = 0; i < excess; i++) msgDivs[i].remove();
-      html = tmp.innerHTML;
-    }
-    const data = { messages: msgs, html };
-    localStorage.setItem('chatHistory', JSON.stringify(data));
-  } catch(e) {}
+const IDB_NAME = 'CoworkChatDB';
+const IDB_STORE = 'chatHistory';
+const IDB_KEY = 'current';
+
+function _openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
-function restoreChatHistory() {
+
+function saveChatHistory() {
+  let msgs = messages;
+  if (msgs.length > MAX_CACHE_MESSAGES) {
+    msgs = msgs.slice(-MAX_CACHE_MESSAGES);
+  }
+  _openDB().then(db => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put({ messages: msgs }, IDB_KEY);
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => { console.error('Failed to save chat history to IndexedDB'); db.close(); };
+  }).catch(e => {
+    console.error('IndexedDB open failed, falling back to localStorage:', e);
+    try { localStorage.setItem('chatHistory', JSON.stringify({ messages: msgs })); } catch(_) {}
+  });
+}
+
+async function restoreChatHistory() {
   try {
-    const saved = localStorage.getItem('chatHistory');
-    if (!saved) return;
-    const data = JSON.parse(saved);
-    if (data.messages && data.messages.length > 0) {
-      messages = data.messages;
-      const inner = document.getElementById('chatInner');
-      inner.innerHTML = data.html;
-      inner.querySelectorAll('img').forEach(img => {
-        img.onerror = function() {
-          const span = document.createElement('span');
-          span.textContent = '🖼️';
-          span.title = '图片已失效';
-          this.replaceWith(span);
-        };
-      });
-      scrollToBottom();
+    // Try IndexedDB first
+    const db = await _openDB();
+    const data = await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => db.close();
+    });
+
+    // Migrate from localStorage if IndexedDB is empty
+    if (!data || !data.messages || data.messages.length === 0) {
+      const legacy = localStorage.getItem('chatHistory');
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        if (parsed.messages && parsed.messages.length > 0) {
+          messages = parsed.messages;
+          _renderRestoredMessages();
+          saveChatHistory(); // migrate to IndexedDB
+          localStorage.removeItem('chatHistory');
+          return;
+        }
+      }
+      return;
     }
-  } catch(e) {}
+
+    messages = data.messages;
+    _renderRestoredMessages();
+  } catch(e) {
+    console.error('Failed to restore chat history:', e);
+    // Fallback: try localStorage
+    try {
+      const saved = localStorage.getItem('chatHistory');
+      if (!saved) return;
+      const d = JSON.parse(saved);
+      if (d.messages && d.messages.length > 0) {
+        messages = d.messages;
+        _renderRestoredMessages();
+      }
+    } catch(_) {}
+  }
+}
+
+function _renderRestoredMessages() {
+  const welcome = document.getElementById('welcomeScreen');
+  if (welcome) welcome.remove();
+  for (const msg of messages) {
+    addMessage(msg.role === 'assistant' ? 'ai' : 'user', msg.content);
+  }
+  document.querySelectorAll('#chatInner pre code').forEach(el => {
+    try { hljs.highlightElement(el); } catch {}
+  });
+  scrollToBottom();
 }
 
 // ===== Markdown Setup =====
@@ -683,7 +730,12 @@ async function sendMessage() {
 
 function clearChat() {
   messages = [];
-  localStorage.removeItem('chatHistory');
+  _openDB().then(db => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(IDB_KEY);
+    tx.oncomplete = () => db.close();
+  }).catch(() => {});
+  localStorage.removeItem('chatHistory'); // also clear legacy
   const inner = document.getElementById('chatInner');
   inner.innerHTML = '<div class="welcome" id="welcomeScreen"><h1>🖥️ Cowork</h1><p>输入指令开始协作</p></div>';
 }

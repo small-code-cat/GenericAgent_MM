@@ -46,6 +46,10 @@ def get_agent():
 def index():
     return send_from_directory(os.path.join(script_dir, 'webui'), 'index.html')
 
+@app.route('/token_stats.html')
+def token_stats():
+    return send_from_directory(os.path.join(script_dir, 'webui'), 'token_stats.html')
+
 @app.route('/api/chat', methods=['POST'])
 def chat():
     global last_reply_time
