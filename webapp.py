@@ -159,6 +159,56 @@ def toggle_autonomous():
         autonomous_enabled = not autonomous_enabled
     return jsonify({'autonomous_enabled': autonomous_enabled})
 
+@app.route('/api/list_jsonl', methods=['GET'])
+def list_jsonl():
+    temp_dir = os.path.join(script_dir, 'temp')
+    files = []
+    current_file = f'llm_stats_{os.getpid()}.jsonl'
+    if os.path.isdir(temp_dir):
+        for f in sorted(os.listdir(temp_dir), reverse=True):
+            if f.endswith('.jsonl'):
+                fpath = os.path.join(temp_dir, f)
+                size_kb = round(os.path.getsize(fpath) / 1024, 1)
+                files.append({'name': f, 'size_kb': size_kb, 'is_current': f == current_file})
+    return jsonify({'files': files, 'current': current_file})
+
+@app.route('/api/token_stats', methods=['GET'])
+def api_token_stats():
+    fname = request.args.get('file', '')
+    if fname and not fname.endswith('.jsonl'):
+        return jsonify([])  # safety
+    if fname:
+        # 防止路径穿越
+        fname = os.path.basename(fname)
+        jsonl_path = os.path.join(script_dir, 'temp', fname)
+    else:
+        jsonl_path = os.path.join(script_dir, 'temp', f'llm_stats_{os.getpid()}.jsonl')
+    if not os.path.exists(jsonl_path):
+        return jsonify([])
+    qa_map = {}
+    with open(jsonl_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            qi = rec.get('qa_index', 0)
+            if qi not in qa_map:
+                qa_map[qi] = {'id': qi, 'question': (rec.get('input_text') or '')[:80], 'iterations': []}
+            qa_map[qi]['iterations'].append({
+                'round': rec.get('iteration', 1),
+                'input_tokens': rec.get('total_input_tokens', rec.get('input_tokens', 0)),
+                'output_tokens': rec.get('output_tokens', 0),
+                'time_sec': round(rec.get('response_time_s', 0), 1),
+                'input_text': (rec.get('input_text') or '')[:500],
+                'output_text': (rec.get('output_text') or '')[:500]
+            })
+    result = sorted(qa_map.values(), key=lambda x: x['id'])
+    return jsonify(result)
+
 @app.route('/api/reinject_prompt', methods=['POST'])
 def reinject_prompt():
     ag = get_agent()

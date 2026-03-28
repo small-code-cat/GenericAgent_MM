@@ -85,13 +85,53 @@ html, body { height:100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe
 }
 .qa-stats .stat-card { flex: 1; padding: 10px 16px; min-width: 0; }
 .qa-stats .stat-card .value { font-size: 18px; }
+
+.text-modal-overlay {
+  display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+  background:rgba(0,0,0,.6); z-index:100; justify-content:center; align-items:center;
+}
+.text-modal-overlay.active { display:flex; }
+.text-modal {
+  background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:12px;
+  width:80%; max-width:800px; max-height:80vh; display:flex; flex-direction:column;
+}
+.text-modal-header {
+  padding:14px 20px; border-bottom:1px solid var(--border-color); display:flex;
+  justify-content:space-between; align-items:center; background:var(--bg-tertiary); border-radius:12px 12px 0 0;
+}
+.text-modal-header h3 { font-size:15px; margin:0; }
+.text-modal-close { background:none; border:none; color:var(--text-muted); font-size:20px; cursor:pointer; padding:0 4px; }
+.text-modal-close:hover { color:var(--text-primary); }
+.text-modal-body { padding:16px 20px; overflow-y:auto; flex:1; }
+.text-modal-body .text-block { margin-bottom:16px; }
+.text-modal-body .text-label { font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
+.text-modal-body pre {
+  background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px;
+  padding:12px; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-all;
+  color:var(--text-secondary); max-height:35vh; overflow-y:auto;
+}
 </style>
 </head>
 <body>
 
+<div class="text-modal-overlay" id="textModal" onclick="if(event.target===this)this.classList.remove('active')">
+  <div class="text-modal">
+    <div class="text-modal-header">
+      <h3 id="modalTitle">迭代详情</h3>
+      <button class="text-modal-close" onclick="document.getElementById('textModal').classList.remove('active')">&times;</button>
+    </div>
+    <div class="text-modal-body" id="modalBody"></div>
+  </div>
+</div>
+
 <div class="page-header">
   <h1>📊 Token 用量统计</h1>
-  <div class="subtitle">当前会话的每次 QA 迭代详情</div>
+  <div style="display:flex;align-items:center;gap:16px;margin-top:8px;flex-wrap:wrap;">
+    <div class="subtitle">每次 QA 迭代详情</div>
+    <select id="fileSelect" style="background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:6px;padding:5px 10px;font-size:13px;cursor:pointer;max-width:360px;">
+      <option value="">当前会话</option>
+    </select>
+  </div>
 </div>
 
 <div class="legend-bar">
@@ -103,64 +143,67 @@ html, body { height:100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe
 <div class="content" id="qaContent"></div>
 
 <script>
-// ===== 假数据 =====
-const mockData = [
-  {
-    id: 1,
-    question: "帮我写一个Python爬虫抓取新闻标题",
-    iterations: [
-      { round: 1, input_tokens: 1250, output_tokens: 860, time_sec: 3.2 },
-      { round: 2, input_tokens: 2100, output_tokens: 1540, time_sec: 5.8 },
-      { round: 3, input_tokens: 2800, output_tokens: 420, time_sec: 2.1 },
-    ]
-  },
-  {
-    id: 2,
-    question: "搜索最新的AI论文并总结",
-    iterations: [
-      { round: 1, input_tokens: 980, output_tokens: 650, time_sec: 2.5 },
-      { round: 2, input_tokens: 3200, output_tokens: 2100, time_sec: 8.4 },
-      { round: 3, input_tokens: 4100, output_tokens: 1800, time_sec: 7.2 },
-      { round: 4, input_tokens: 4500, output_tokens: 3200, time_sec: 12.1 },
-      { round: 5, input_tokens: 5000, output_tokens: 980, time_sec: 4.3 },
-    ]
-  },
-  {
-    id: 3,
-    question: "修复项目中的内存泄漏问题",
-    iterations: [
-      { round: 1, input_tokens: 1800, output_tokens: 1200, time_sec: 4.6 },
-      { round: 2, input_tokens: 3500, output_tokens: 2800, time_sec: 9.8 },
-    ]
-  },
-  {
-    id: 4,
-    question: "把这段代码重构成TypeScript并添加类型定义",
-    iterations: [
-      { round: 1, input_tokens: 2200, output_tokens: 1900, time_sec: 6.3 },
-      { round: 2, input_tokens: 3100, output_tokens: 2400, time_sec: 8.1 },
-      { round: 3, input_tokens: 3800, output_tokens: 1600, time_sec: 5.9 },
-      { round: 4, input_tokens: 4200, output_tokens: 800, time_sec: 3.2 },
-    ]
-  },
-  {
-    id: 5,
-    question: "分析服务器日志找出502错误的原因",
-    iterations: [
-      { round: 1, input_tokens: 1500, output_tokens: 900, time_sec: 3.8 },
-      { round: 2, input_tokens: 2800, output_tokens: 2200, time_sec: 7.5 },
-      { round: 3, input_tokens: 5200, output_tokens: 3800, time_sec: 14.2 },
-      { round: 4, input_tokens: 5800, output_tokens: 1200, time_sec: 5.1 },
-      { round: 5, input_tokens: 6100, output_tokens: 2600, time_sec: 9.8 },
-      { round: 6, input_tokens: 6500, output_tokens: 600, time_sec: 2.9 },
-    ]
-  }
-];
-
-// ===== 渲染每个 QA =====
+// ===== 从后端 API 加载真实数据 =====
 const content = document.getElementById('qaContent');
 
-mockData.forEach((qa, idx) => {
+async function loadFileList() {
+  try {
+    const res = await fetch('/api/list_jsonl');
+    const info = await res.json();
+    const sel = document.getElementById('fileSelect');
+    sel.innerHTML = '<option value="">当前会话</option>';
+    (info.files || []).forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.name;
+      opt.textContent = `${f.name} (${f.size_kb}KB)${f.is_current ? ' ★' : ''}`;
+      sel.appendChild(opt);
+    });
+  } catch(e) { console.warn('加载文件列表失败', e); }
+}
+
+document.getElementById('fileSelect').addEventListener('change', function() {
+  loadAndRender(this.value);
+});
+
+async function loadAndRender(file) {
+  // 清理旧内容
+  content.innerHTML = '';
+  const oldSummary = document.querySelector('.summary-bar');
+  if (oldSummary) oldSummary.remove();
+
+  const url = file ? `/api/token_stats?file=${encodeURIComponent(file)}` : '/api/token_stats';
+  let data;
+  try {
+    const resp = await fetch(url);
+    data = await resp.json();
+  } catch (e) {
+    content.innerHTML = '<div style="text-align:center;padding:60px 0;color:#666;">⚠️ 无法连接后端 API</div>';
+    return;
+  }
+  if (!data || data.length === 0) {
+    content.innerHTML = '<div style="text-align:center;padding:60px 0;color:#666;">暂无数据，开始对话后将自动记录</div>';
+    return;
+  }
+
+  // 渲染全局汇总
+  const totalInput = data.reduce((s, q) => s + q.iterations.reduce((a, i) => a + i.input_tokens, 0), 0);
+  const totalOutput = data.reduce((s, q) => s + q.iterations.reduce((a, i) => a + i.output_tokens, 0), 0);
+  const totalTime = data.reduce((s, q) => s + q.iterations.reduce((a, i) => a + i.time_sec, 0), 0);
+  const totalRounds = data.reduce((s, q) => s + q.iterations.length, 0);
+  const header = document.querySelector('.page-header');
+  const summaryDiv = document.createElement('div');
+  summaryDiv.className = 'summary-bar';
+  summaryDiv.style.cssText = 'display:flex;gap:24px;justify-content:center;padding:12px 32px 0;flex-wrap:wrap;';
+  summaryDiv.innerHTML = `
+    <div class="stat-card"><div class="label">QA 总数</div><div class="value total">${data.length}</div></div>
+    <div class="stat-card"><div class="label">总迭代</div><div class="value total">${totalRounds}</div></div>
+    <div class="stat-card"><div class="label">总输入 Tokens</div><div class="value input">${totalInput.toLocaleString()}</div></div>
+    <div class="stat-card"><div class="label">总输出 Tokens</div><div class="value output">${totalOutput.toLocaleString()}</div></div>
+    <div class="stat-card"><div class="label">总耗时</div><div class="value time">${totalTime.toFixed(1)}s</div></div>
+  `;
+  header.after(summaryDiv);
+
+  data.forEach((qa, idx) => {
   const qaInput = qa.iterations.reduce((s, i) => s + i.input_tokens, 0);
   const qaOutput = qa.iterations.reduce((s, i) => s + i.output_tokens, 0);
   const qaTime = qa.iterations.reduce((s, i) => s + i.time_sec, 0);
@@ -227,6 +270,22 @@ mockData.forEach((qa, idx) => {
       maintainAspectRatio: true,
       aspectRatio: qa.iterations.length <= 3 ? 4 : 3,
       interaction: { mode: 'index', intersect: false },
+      onClick: function(evt, elements) {
+        if (!elements.length) return;
+        const di = elements[0].index;
+        const iter = qa.iterations[di];
+        document.getElementById('modalTitle').textContent = `Q${qa.id} - 第${iter.round}轮 迭代详情`;
+        let html = '';
+        if (iter.input_text) {
+          html += `<div class="text-block"><div class="text-label">📥 输入文本</div><pre>${iter.input_text.replace(/</g,'&lt;')}</pre></div>`;
+        }
+        if (iter.output_text) {
+          html += `<div class="text-block"><div class="text-label">📤 输出文本</div><pre>${iter.output_text.replace(/</g,'&lt;')}</pre></div>`;
+        }
+        if (!html) html = '<div style="color:#666;padding:20px;">该迭代无文本数据</div>';
+        document.getElementById('modalBody').innerHTML = html;
+        document.getElementById('textModal').classList.add('active');
+      },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -235,12 +294,30 @@ mockData.forEach((qa, idx) => {
           borderWidth: 1,
           titleColor: '#e8e8e8',
           bodyColor: '#999',
-          padding: 10,
+          footerColor: '#666',
+          padding: 12,
           cornerRadius: 8,
+          bodyFont: { size: 12 },
+          footerFont: { size: 10, style: 'italic' },
           callbacks: {
             label: function(ctx) {
               if (ctx.dataset.yAxisID === 'y1') return ` ${ctx.dataset.label}: ${ctx.raw}s`;
               return ` ${ctx.dataset.label}: ${ctx.raw.toLocaleString()}`;
+            },
+            afterBody: function(tooltipItems) {
+              const di = tooltipItems[0].dataIndex;
+              const iter = qa.iterations[di];
+              const lines = [''];
+              if (iter.input_text) {
+                const t = iter.input_text.length > 150 ? iter.input_text.slice(0, 150) + '…' : iter.input_text;
+                lines.push('📥 输入: ' + t.replace(/\n/g, ' '));
+              }
+              if (iter.output_text) {
+                const t = iter.output_text.length > 150 ? iter.output_text.slice(0, 150) + '…' : iter.output_text;
+                lines.push('📤 输出: ' + t.replace(/\n/g, ' '));
+              }
+              if (iter.input_text || iter.output_text) lines.push('\n🖱 点击柱形查看完整文本');
+              return lines;
             }
           }
         }
@@ -267,7 +344,11 @@ mockData.forEach((qa, idx) => {
       }
     }
   });
-});
+  });
+}
+
+loadFileList();
+loadAndRender();
 </script>
 </body>
 </html>

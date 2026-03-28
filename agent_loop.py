@@ -1,4 +1,5 @@
-import json, re
+import json, re, time
+from llm_stats import LLMStatsLogger
 from dataclasses import dataclass
 from typing import Any, Optional
 @dataclass
@@ -53,9 +54,12 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
     ]
+    _stats = LLMStatsLogger.get()
+    _stats.new_qa()
     for turn in range(max_turns):
         yield f"**LLM Running (Turn {turn+1}) ...**\n\n"
         if (turn+1) % 10 == 0: client.last_tools = ''  # 每10轮重置一次工具描述，避免上下文过大导致的模型性能下降
+        _t0 = time.time()
         response_gen = client.chat(messages=messages, tools=tools_schema)
         if verbose:
             response = yield from response_gen
@@ -63,6 +67,12 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
         else:
             response = exhaust(response_gen)
             yield response.content
+        _elapsed = time.time() - _t0
+        try:
+            _model = getattr(getattr(client, 'backend', None), 'default_model', 'unknown')
+            _stats.log_iteration(turn + 1, _model, messages, response.content or '', _elapsed)
+        except Exception:
+            pass
 
         if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
         else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments)}
