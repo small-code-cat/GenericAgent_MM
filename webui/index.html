@@ -420,7 +420,14 @@ function _renderRestoredMessages() {
   const welcome = document.getElementById('welcomeScreen');
   if (welcome) welcome.remove();
   for (const msg of messages) {
-    addMessage(msg.role === 'assistant' ? 'ai' : 'user', msg.content);
+    if (msg.role === 'user' && msg.images && msg.images.length > 0) {
+      let html = '<div class="msg-images">' + msg.images.map(src =>
+        `<img src="${src}" alt="uploaded">`
+      ).join('') + '</div>' + escapeHtml(msg.content);
+      addMessage('user', html, false, true);
+    } else {
+      addMessage(msg.role === 'assistant' ? 'ai' : 'user', msg.content);
+    }
   }
   document.querySelectorAll('#chatInner pre code').forEach(el => {
     try { hljs.highlightElement(el); } catch {}
@@ -649,7 +656,8 @@ async function sendMessage() {
     ).join('') + '</div>';
   }
   userDisplay += escapeHtml(text);
-  messages.push({role:'user', content:text});
+  const imgDataUrls = images.map(img => img.dataUrl);
+  messages.push({role:'user', content:text, images: imgDataUrls.length > 0 ? imgDataUrls : undefined});
   addMessage('user', userDisplay, false, true);
   saveChatHistory();
 
