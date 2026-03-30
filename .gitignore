@@ -28,6 +28,7 @@ model_responses.txt
 
 # Sensitive files (API keys, credentials)
 mykey.py
+ssh_config.py
 
 tasks/
 # Multimodal memory code and docs (must be before memory/*)
@@ -106,3 +107,6 @@ assets/tmwd_cdp_bridge/config.js
 memory/multimodal_memory/*.db
 memory/multimodal_memory/images/
 !memory/multimodal_memory/images/.gitkeep
+
+memory/remote_develop/__pycache__
+!memory/remote_develop
