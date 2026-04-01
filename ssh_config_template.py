@@ -4,4 +4,5 @@ ssh1 = {
     'hostname':"",
     'password':"",
     'project_path':"",
+    'envs':'',  # conda环境名
 }

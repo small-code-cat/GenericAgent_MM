@@ -24,3 +24,12 @@ r = connect('ssh1')  # ssh_config.py中的配置名
 - patch要求old_content在文件中唯一
 - exec默认timeout=30s，长任务需加大：`r.exec(cmd, timeout=300)`
 - 每次code_run结束后连接会断开，下次需重新connect
+- ssh_config中可配置`envs`字段（conda环境名），设置后exec自动将该环境bin加入PATH，python3/pip等命令直接使用该环境
+
+## 远程多文件开发避坑（写代码前必做）
+1. **环境探测先行**: 写代码前先 `r.exec('pip list')` + `r.exec('python --version')` 摸清已装包，避免写完才发现缺依赖
+2. **读清再调用**: 调用现有模块前先 `r.read()` 完整读取其接口（类名/函数签名），禁止假设API
+3. **Config一次写全**: 写config前先 `r.search('config.', '.', '*.py')` grep所有引用，一次定义完所有常量，禁止逐个补丁
+4. **Import用lazy**: `__init__.py` 禁止 eager import 子模块；外部重依赖（transformers等）用函数内import
+5. **全量验证**: 写完所有文件后，用一个脚本一次性 `import` 所有模块并报告错误，禁止逐个模块试错
+6. **目录先建后用**: `r.exec('mkdir -p xxx')` 后再 `r.ls()`/`r.write()`，禁止对不存在的目录操作

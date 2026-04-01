@@ -28,9 +28,11 @@ from mm_memory import memorize, recall
 | 🚫 禁止批量循环 | 不要循环调用 memorize，一次调用处理一组图文 |
 | ⚠️ 图片自动探测 | 未传 image_path 时，自动扫描 `temp/uploads/` 最近60秒内的图片 |
 | ⚠️ 返回值是字符串 | `memorize()` 返回 `str`（人类可读摘要），不是列表 |
-| 🔴 recall失败必重试 | recall报错/返回空时，先检查路径和参数，必须重试，禁止直接放弃跳过 |
+| 🔴 recall必传用户全部输入 | recall时必须传入用户的所有输入：文本→query，图片→image_path。只需调用一次，无需重试 |
 | 🔴 禁止幻觉结果 | 必须等待真实tool_result返回，禁止自行编造recall/memorize的执行结果 |
 | 🔴 展示图片禁用markdown | recall到图片后，必须用 `code_run` 执行 `subprocess.Popen(["open", path])` 弹出查看器，**严禁**用 `![](path)` 或浏览器打开。详见场景C |
+| 🔴 图片识别/比对用多模态 | 用户要求识别/比对图片时（如"这是我的猫吗"），**禁止**用PIL/OpenCV等代码处理图片。先recall(必传用户全部输入含图片)获取记忆，再用多模态视觉能力**重点对比图片**即可判断 |
+| 🔴 recall不足→浏览器搜索 | recall 无结果/低分/不相关时，必须降级用浏览器搜索用户的图文输入（详见场景E） |
 
 ---
 
@@ -80,7 +82,7 @@ result = memorize("这是系统架构图", image_path="/path/to/arch.png")
 ### 签名
 ```python
 def recall(query="", image_data=None, mime_type="image/png",
-           top_k=5, threshold=0.35, source_type=None,
+           top_k=5, threshold=0.5, source_type=None,
            expand_groups=True, **kwargs) -> List[SearchResult]
 ```
 
@@ -90,9 +92,7 @@ def recall(query="", image_data=None, mime_type="image/png",
 ```python
 results = recall("Python多线程为什么慢")
 for r in results:
-    print(f"[{r.score:.2f}] {r.content[:100]}")
-    if r.source_path:  # 有关联图片
-        print(f"  图片: {r.source_path}")
+    print(f"[{r.score:.2f}] content={r.content}, source_path={r.source_path}")
 ```
 
 **图片检索**（传文件路径，自动读取）
@@ -106,21 +106,30 @@ results = recall("架构图", image_path="/path/to/ref.png")
 ```
 
 ### SearchResult 字段
+
+**核心字段（只用这三个）：**
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `content` | str | 记忆内容文本 |
-| `score` | float | 相似度分数 |
-| `source_type` | str | `"text"` / `"image"` |
+| `score` | float | 余弦相似度分数 |
+| `content` | str | 文本内容（原始文本/图片描述/提取的知识） |
+| `source_path` | str | 图片文件路径（仅图片记录有值，无图片时为空） |
+
+> 不做 group 合并，所有通过筛选/扩展的 item 逐条返回。同一 group 的多条记录（文本+图片+知识）会各自独立出现在结果中。
+
+**其他字段（代理自 KnowledgeItem，调试用）：**
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `match_reason` | str | 匹配说明 |
+| `source_type` | str | `"text"` / `"image"` / `"mixed"` |
 | `embed_type` | str | `"source_text"` / `"source_image"` / `"knowledge"` |
 | `group_id` | str | 同组记忆的关联ID |
-| `source_path` | str | 图片文件路径（仅source_image记录有值） |
 | `created_at` | float | 创建时间戳 |
 
 ### 检索调优
 | 参数 | 首选值 | 说明 |
 |------|--------|------|
 | `top_k` | 5 | 返回条数，信息不足时可增到10-20 |
-| `threshold` | 0.35 | 最低分数，精确查找可提高到0.5 |
+| `threshold` | 0.5 | 最低分数阈值（代码默认0.5），精确查找可提高到0.6 |
 | `expand_groups` | True | 自动展开同组记忆（获取关联图片/知识） |
 | `source_type` | None | 过滤：`"text"` 仅文本 / `"image"` 仅图片 |
 
@@ -162,6 +171,59 @@ if img_path:
 1. **必须通过 code_run 执行代码**调用 `subprocess.Popen(["open", path])` 弹出图片，用户期望的是屏幕上直接弹出图片查看器
 2. 🔴 **核心易错点**：不要只在对话文本中"描述"怎么打开图片，必须实际执行代码让图片弹出来
 3. 可同时用文字简要描述图片内容作为补充（如"这是你的深灰色 Model 3 的车尾照"）
+
+---
+
+## 4.5 场景 D：图片识别/比对
+
+### 🔴 核心原则
+**必须用你的原生多模态能力对比图片。**
+
+### 正确流程（仅需2步）
+1. **recall 一次**：传入用户全部输入（文本→query，图片→image_path），打印精简信息（仅分数+图片路径）
+```python
+results = recall("猫咪", image_path="/path/to/user_upload.jpg")
+for r in results:
+    print(f"[{r.score:.2f}] content={r.content[:80]}, source_path={r.source_path}")
+```
+2. **直接用多模态视觉比对**：recall 返回的图片已自动注入上下文，直接用视觉能力对比用户图片和记忆图片，给出结论
+
+### 🔴 禁止事项（血泪教训）
+| 禁止 | 原因 |
+|------|------|
+| 多次调用 recall | recall 只调一次，已包含全部匹配结果 |
+| recall 后再调 get_group 获取文本描述 | recall 已返回足够信息（expand_groups=True 默认展开），多余调用浪费时间 |
+| subprocess.Popen(["open", img]) 打开记忆图片 | 图片比对是 Agent 自己做的事，不是给用户看的。记忆图片已在 recall 结果中自动注入上下文，直接用视觉能力比对即可 |
+| 打印冗余字段（source_type/embed_type/match_reason等） | 用户只关心分数和图片路径，其余字段是调试用的 |
+| 用 PIL/OpenCV 等代码处理图片做比对 | 必须用原生多模态视觉能力 |
+
+---
+
+## 4.6 场景 E：recall 结果不足时的浏览器搜索降级
+
+### 触发条件
+当 recall 返回结果**不足以回答用户问题**时（包括：无结果、全部低分 < 0.3、结果明显不相关），需要降级到浏览器搜索。
+
+### 正确流程
+1. **先 recall**（必须先查记忆库，不可跳过）
+2. **判断结果是否充分**：无结果 / 低分 / 不相关 → 进入降级搜索
+3. **浏览器搜索用户的图文输入**：
+   - **有图片**：使用 Google 以图搜图（参考 tmwebdriver_sop 中的图搜流程）
+   - **有文本**：使用 Google 搜索用户的文本查询
+   - **图文都有**：优先以图搜图，文本作为辅助验证
+4. **综合记忆 + 搜索结果**回答用户
+
+### 典型场景
+- 用户问"图片中的人是谁"，recall 无匹配 → Google 以图搜图识别人物
+- 用户问"这是什么品种的猫"，recall 无匹配 → Google 搜索识别
+- 用户问"这个地标在哪"，recall 无匹配 → Google 以图搜图定位
+
+### 🔴 注意事项
+| 规则 | 说明 |
+|------|------|
+| 必须先 recall | 浏览器搜索是**降级方案**，不可跳过记忆库直接搜索 |
+| 搜索结果需交叉验证 | 不可盲信搜索摘要，需进详情页核实 |
+| 个人信息优先记忆库 | 如果是"我的猫/我的车"等个人归属问题，recall 有结果时以记忆库为准 |
 
 ---
 

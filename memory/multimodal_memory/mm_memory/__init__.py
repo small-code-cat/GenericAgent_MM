@@ -19,6 +19,15 @@
     # 语义检索（图片路径）
     results = recall(image_path="/path/to/ui.png")
 """
+
+# ── 确保项目根目录在 sys.path 中（mykey 等模块需要）──
+import sys as _sys, os as _os
+_pkg_dir = _os.path.dirname(_os.path.abspath(__file__))
+_project_root = _os.path.abspath(_os.path.join(_pkg_dir, "..", "..", ".."))
+if _project_root not in _sys.path:
+    _sys.path.insert(0, _project_root)
+del _pkg_dir  # 清理命名空间，_project_root 保留给后续使用
+
 from typing import List, Optional, Dict, Any
 from .models import KnowledgeItem, SearchResult
 from .engine import MemoryEngine, get_engine
@@ -189,7 +198,7 @@ def memorize_raw(content: str,
 def recall(query: str = "",
            image_data: Optional[bytes] = None,
            mime_type: str = "image/png",
-           top_k: int = 5, threshold: float = 0.35,
+           top_k: int = 5, threshold: float = 0.5,
            source_type=None,
            expand_groups: bool = True,
            **kwargs) -> List[SearchResult]:
@@ -330,25 +339,25 @@ def unique_images(results: List[SearchResult]) -> List[SearchResult]:
 # ── 底层工具便捷访问 ─────────────────────────────────────
 
 def embed_text(text: str, model: str = "", dimensions: int = None) -> List[float]:
-    """计算单段文本的 embedding 向量"""
+    """计算单段文本的 embedding 向量（model/dimensions 参数保留兼容，实际由 embedder 内部配置决定）"""
     from .embedder import embed_text as _impl
-    return _impl(text, model, dimensions)
+    return _impl(text)
 
 def embed_image(image_path: str, model: str = "", dimensions: int = None) -> List[float]:
     """计算图片的 embedding 向量（文件路径方式）"""
     from .embedder import embed_image as _impl
-    return _impl(image_path, model, dimensions)
+    return _impl(image_path)
 
 def embed_image_from_bytes(raw_bytes: bytes, mime_type: str = "image/png",
                             model: str = "", dimensions: int = None) -> List[float]:
     """计算图片字节数据的 embedding 向量"""
     from .embedder import embed_image_from_bytes as _impl
-    return _impl(raw_bytes, mime_type, model, dimensions)
+    return _impl(raw_bytes, mime_type)
 
 def embed_texts(texts: List[str], model: str = "", dimensions: int = None) -> List[List[float]]:
     """批量计算文本 embedding"""
     from .embedder import embed_texts as _impl
-    return _impl(texts, model, dimensions)
+    return _impl(texts)
 
 def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
     """计算余弦相似度"""

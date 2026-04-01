@@ -26,6 +26,16 @@
 - "访问"链接：遍历a找`textContent.includes('访问')`的href
 - 缩略图：`img[src^="data:image"]`直接提取；大图src可能截断用`return img.src`
 
+### Google Lens反向图搜(识别图中人/物)优化流程
+已知缓存：上传input selector=`input[name=encoded_image]`，相机按钮无稳定selector需遍历SVG
+⚠禁止中间web_scan：页面结构和selector已缓存，直接操作
+1. file_read: 读TID(`assets/tmwd_cdp_bridge/config.js`)
+2. web_execute_js: 导航`location.href='https://images.google.com'`
+3. web_execute_js: 点击相机按钮(遍历SVG找按图搜索入口)
+4. web_execute_js: CDP batch三连上传(getDocument→querySelector `input[name=encoded_image]`→setFileInputFiles)
+5. web_scan(text_only): 读取识别结果
+共5步，禁止在步骤间插入多余web_scan
+
 ## Chrome下载PDF
 场景：PDF链接在浏览器内预览而非下载
 ```js

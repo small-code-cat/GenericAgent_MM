@@ -1,167 +1,185 @@
-"""多模态记忆系统 — Embedding 计算"""
-from __future__ import annotations
-import json, math, os, sys
+"""
+embedder.py – 基于 dashscope HTTP API 的多模态 embedding 模块
+使用 qwen3-vl-embedding 模型，支持文本和图片的独立/融合向量化
+
+API 接口保持不变：
+  embed_text(text)             → List[float]
+  embed_image(image_path)      → List[float]
+  embed_image_from_bytes(data) → List[float]
+  embed_texts(texts)           → List[List[float]]
+  cosine_similarity(a, b)      → float
+"""
+
+import base64
+import math
+import mimetypes
+import os
 from typing import List, Optional
 
 import requests
 
-# ── API 配置 ─────────────────────────────────────────────
+from mykey import oai_config2 as _cfg
 
-_DEFAULT_API_BASE = "https://api.bianxie.ai/v1"
-_DEFAULT_EMBED_MODEL = "gemini-embedding-2-preview"
-_EMBED_DIMENSIONS: Optional[int] = None  # None = 使用模型默认维度
+# ── 配置 ──────────────────────────────────────────────
+_API_KEY: str = _cfg.get("apikey", "") or _cfg.get("api_key", "")
+_MODEL: str = _cfg.get("model", "qwen3-vl-embedding")
+_API_URL: str = (
+    "https://dashscope.aliyuncs.com"
+    "/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+)
+# 向量维度：支持 2560(默认), 2048, 1536, 1024, 768, 512, 256
+_DIMENSION: Optional[int] = _cfg.get("dimension", None)
+_TIMEOUT: int = 60  # 请求超时秒数
 
-
-def _get_config() -> dict:
-    """获取 oai_config2 配置（embedding 用）"""
-    try:
-        proj_root = os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__)))))
-        if proj_root not in sys.path:
-            sys.path.insert(0, proj_root)
-        from mykey import oai_config2  # type: ignore
-        return oai_config2
-    except Exception:
-        return {}
+# ── 全局 Session（绕过系统代理）──────────────────────
+_session = requests.Session()
+_session.trust_env = False  # 关键：不读取系统代理，避免 SSL 错误
 
 
-def _get_api_key() -> str:
-    key = os.environ.get("DASHSCOPE_API_KEY", "")
-    if key:
-        return key
-    return _get_config().get("apikey", "")
+# ── 核心调用 ──────────────────────────────────────────
 
+def _call_embedding(contents: list) -> List[float]:
+    """调用 dashscope 多模态 embedding HTTP API，返回单条向量。
 
-def _get_api_base() -> str:
-    base = _get_config().get("apibase", "")
-    if base:
-        return base.rstrip("/")
-    return _DEFAULT_API_BASE
+    Args:
+        contents: 输入列表，如 [{"text": "..."}] 或 [{"image": "data:..."}]
+                  多元素时自动启用融合模式
 
-
-def _get_embed_model() -> str:
-    return _get_config().get("model", _DEFAULT_EMBED_MODEL)
-
-
-def _post_json(url: str, payload: dict, api_key: str, timeout: int = 30) -> dict:
-    """统一 POST JSON 请求"""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
-    resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()
-
-
-# ── Embedding API 调用 ───────────────────────────────────
-
-def _call_embedding_api(input_data, model: str = "",
-                        dimensions: Optional[int] = _EMBED_DIMENSIONS,
-                        timeout: int = 30) -> dict:
-    """统一 embedding API 调用（支持文本和 data URI）"""
-    api_key = _get_api_key()
-    if not api_key:
-        raise RuntimeError("未找到 API Key，请设置环境变量或配置 mykey.py")
-
-    if not model:
-        model = _get_embed_model()
-
-    url = f"{_get_api_base()}/embeddings"
-    payload: dict = {
-        "model": model,
-        "input": input_data,
-        "encoding_format": "float",
-    }
-    if dimensions is not None:
-        payload["dimensions"] = dimensions
-
-    try:
-        return _post_json(url, payload, api_key, timeout=timeout)
-    except Exception as e:
-        raise RuntimeError(f"Embedding API 调用失败: {e}") from e
-
-
-def embed_text(text: str, model: str = "",
-               dimensions: Optional[int] = _EMBED_DIMENSIONS) -> List[float]:
-    """计算单段文本的 embedding 向量"""
-    result = _call_embedding_api(text, model, dimensions)
-    return result["data"][0]["embedding"]
-
-
-def embed_image(image_path: str, model: str = "",
-                dimensions: Optional[int] = _EMBED_DIMENSIONS) -> List[float]:
-    """计算图片的 embedding 向量（利用多模态 embedding 模型）
-
-    将图片转为 data URI 格式传入 embedding API。
-    要求模型支持多模态 embedding（如 gemini-embedding-2-preview）。
+    Returns:
+        embedding 向量 (List[float])
     """
-    import base64, mimetypes
-    if not os.path.isfile(image_path):
-        raise FileNotFoundError(f"图片不存在: {image_path}")
+    headers = {
+        "Authorization": f"Bearer {_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload: dict = {
+        "model": _MODEL,
+        "input": {"contents": contents},
+        "parameters": {},
+    }
+    if _DIMENSION is not None:
+        payload["parameters"]["dimension"] = _DIMENSION
 
-    mime, _ = mimetypes.guess_type(image_path)
+    resp = _session.post(_API_URL, headers=headers, json=payload, timeout=_TIMEOUT)
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Dashscope embedding API 错误 (HTTP {resp.status_code}): "
+            f"{resp.text[:500]}"
+        )
+
+    data = resp.json()
+    embeddings = data.get("output", {}).get("embeddings", [])
+    if not embeddings:
+        raise RuntimeError(
+            f"Dashscope embedding API 返回空结果: {resp.text[:500]}"
+        )
+
+    return embeddings[0]["embedding"]
+
+
+# ── 图片辅助 ──────────────────────────────────────────
+
+def _image_path_to_data_uri(image_path: str) -> str:
+    """将本地图片路径转为 base64 data URI"""
+    abs_path = os.path.abspath(image_path)
+    if not os.path.exists(abs_path):
+        raise FileNotFoundError(f"图片文件不存在: {abs_path}")
+
+    mime, _ = mimetypes.guess_type(abs_path)
     if not mime:
         mime = "image/png"
-    with open(image_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
-    data_uri = f"data:{mime};base64,{b64}"
 
-    result = _call_embedding_api(data_uri, model, dimensions, timeout=60)
-    return result["data"][0]["embedding"]
+    with open(abs_path, "rb") as f:
+        raw = f.read()
 
-
-def embed_image_from_bytes(raw_bytes: bytes, mime_type: str = "image/png",
-                           model: str = "",
-                           dimensions: Optional[int] = _EMBED_DIMENSIONS) -> List[float]:
-    """计算图片字节数据的 embedding 向量（从内存字节数据计算）"""
-    import base64
-    b64 = base64.b64encode(raw_bytes).decode("utf-8")
-    data_uri = f"data:{mime_type};base64,{b64}"
-
-    result = _call_embedding_api(data_uri, model, dimensions, timeout=60)
-    return result["data"][0]["embedding"]
+    b64 = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{b64}"
 
 
-def embed_texts(texts: List[str], model: str = "",
-                dimensions: Optional[int] = _EMBED_DIMENSIONS) -> List[List[float]]:
-    """批量计算 embedding（仅支持文本）"""
-    if not texts:
-        return []
-
-    all_embeddings: List[List[float]] = []
-    batch_size = 25
-
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
-        result = _call_embedding_api(batch, "", dimensions, timeout=60)
-        sorted_data = sorted(result["data"], key=lambda x: x["index"])
-        all_embeddings.extend([d["embedding"] for d in sorted_data])
-
-    return all_embeddings
+def _image_bytes_to_data_uri(data: bytes, mime_type: str = "image/png") -> str:
+    """将图片字节数据转为 base64 data URI"""
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:{mime_type};base64,{b64}"
 
 
-# ── 向量工具函数 ──────────────────────────────────────────
+# ── 公开接口 ──────────────────────────────────────────
 
-def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+def embed_text(text: str) -> List[float]:
+    """将文本转换为向量"""
+    if not text or not text.strip():
+        raise ValueError("embed_text: 文本不能为空")
+    return _call_embedding([{"text": text}])
+
+
+def embed_image(image_path: str) -> List[float]:
+    """将图片文件转换为向量（传入本地路径或 URL）"""
+    if not image_path:
+        raise ValueError("embed_image: 路径不能为空")
+
+    if image_path.startswith(("http://", "https://")):
+        # 远程 URL 直接传
+        return _call_embedding([{"image": image_path}])
+    else:
+        # 本地文件 → base64 data URI
+        data_uri = _image_path_to_data_uri(image_path)
+        return _call_embedding([{"image": data_uri}])
+
+
+def embed_image_from_bytes(data: bytes, mime_type: str = "image/png") -> List[float]:
+    """将图片字节数据转换为向量"""
+    if not data:
+        raise ValueError("embed_image_from_bytes: 数据不能为空")
+    data_uri = _image_bytes_to_data_uri(data, mime_type)
+    return _call_embedding([{"image": data_uri}])
+
+
+def embed_text_and_image(
+    text: str = "",
+    image_path: str = "",
+    image_data: Optional[bytes] = None,
+    mime_type: str = "image/png",
+) -> List[float]:
+    """将文本和图片融合为一个向量（多模态融合 embedding）
+
+    至少提供 text 或 image_path/image_data 之一。
+    当同时提供文本和图片时，API 会生成融合向量。
+    """
+    contents: list = []
+
+    if text and text.strip():
+        contents.append({"text": text})
+
+    if image_data:
+        data_uri = _image_bytes_to_data_uri(image_data, mime_type)
+        contents.append({"image": data_uri})
+    elif image_path:
+        if image_path.startswith(("http://", "https://")):
+            contents.append({"image": image_path})
+        else:
+            data_uri = _image_path_to_data_uri(image_path)
+            contents.append({"image": data_uri})
+
+    if not contents:
+        raise ValueError("embed_text_and_image: 至少提供文本或图片")
+
+    return _call_embedding(contents)
+
+
+def embed_texts(texts: List[str]) -> List[List[float]]:
+    """批量将文本转换为向量（逐条调用）"""
+    return [embed_text(t) for t in texts]
+
+
+# ── 工具函数 ──────────────────────────────────────────
+
+def cosine_similarity(a: List[float], b: List[float]) -> float:
     """计算两个向量的余弦相似度"""
-    if len(vec_a) != len(vec_b):
-        raise ValueError(f"向量维度不匹配: {len(vec_a)} vs {len(vec_b)}")
-
-    dot = sum(a * b for a, b in zip(vec_a, vec_b))
-    norm_a = math.sqrt(sum(a * a for a in vec_a))
-    norm_b = math.sqrt(sum(b * b for b in vec_b))
-
+    if len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return dot / (norm_a * norm_b)
-
-
-def serialize_vector(vec: List[float]) -> str:
-    """将向量序列化为紧凑字符串（用于 SQLite 存储）"""
-    return json.dumps(vec)
-
-
-def deserialize_vector(s: str) -> List[float]:
-    """从字符串反序列化向量"""
-    return json.loads(s)

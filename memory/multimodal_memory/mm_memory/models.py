@@ -82,10 +82,19 @@ class KnowledgeItem:
 
 @dataclass
 class SearchResult:
-    """语义检索结果（含关联语义实体）"""
+    """语义检索结果 — 只暴露 score / content / source_path"""
     item: KnowledgeItem
     score: float = 0.0           # 余弦相似度
-    match_reason: str = ""       # 匹配说明
+    match_reason: str = ""       # 匹配说明（内部调试用）
+
+    # ── 三个核心只读属性 ──────────────────────────────
+    @property
+    def content(self) -> str:
+        return self.item.content
+
+    @property
+    def source_path(self) -> str:
+        return self.item.source_path
 
     def __getattr__(self, name: str):
         # 代理未知属性到 item（dataclass 自身字段不会走这里）
@@ -109,15 +118,19 @@ class SearchResult:
         return getattr(self.item, key, default)
 
     def to_dict(self) -> dict:
-        d = {
-            "item": self.item.to_dict(),
+        return {
             "score": self.score,
-            "match_reason": self.match_reason,
+            "content": self.content,
+            "source_path": self.source_path,
         }
-        return d
 
     def __repr__(self):
-        return f"SearchResult(score={self.score:.3f}, content={self.item.content!r})"
+        parts = [f"score={self.score:.3f}"]
+        if self.source_path:
+            parts.append(f"image={self.source_path!r}")
+        else:
+            parts.append(f"content={self.content[:60]!r}")
+        return f"SearchResult({', '.join(parts)})"
 
 
 # ── 智能眼镜场景：以用户为中心的语义实体 ─────────────────

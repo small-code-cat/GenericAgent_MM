@@ -148,26 +148,55 @@ class ClaudeSession:
     def make_messages(self, raw_list):
         trimmed = self._trim_messages(raw_list)
         messages = []
+        last_idx = len(trimmed) - 1
         for i, m in enumerate(trimmed):
-            if m.get('image') and i >= len(trimmed) - 2:
-                messages.append({"role": m['role'], "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": m['image']}},
-                    {"type": "text", "text": m['prompt']}
-                ]})
+            is_last = (i == last_idx)
+            if isinstance(m.get('content'), list):
+                if is_last:
+                    # 最后一条：content list 直通，保留所有图片
+                    messages.append({"role": m['role'], "content": m['content']})
+                else:
+                    # 历史记录：过滤掉图片block，只保留文本
+                    text_only = [b for b in m['content'] if b.get('type') != 'image']
+                    messages.append({"role": m['role'], "content": text_only or m.get('prompt', '[Image omitted]')})
+            elif m.get('image'):
+                if is_last:
+                    # 最后一条：旧格式，保留图片
+                    messages.append({"role": m['role'], "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": m['image']}},
+                        {"type": "text", "text": m['prompt']}
+                    ]})
+                else:
+                    # 历史记录：旧格式，省略图片只保留文本
+                    messages.append({"role": m['role'], "content": m['prompt']})
             else:
+                # 纯文本
                 messages.append({"role": m['role'], "content": m['prompt']})
         return messages
-    def ask(self, prompt, model=None, stream=False, image_base64=None):
+    def ask(self, prompt=None, model=None, stream=False, image_base64=None, content=None):
         def _ask_gen():
-            content = ''
+            resp_content = ''
             with self.lock:
-                entry = {"role": "user", "prompt": prompt}
-                if image_base64: entry["image"] = image_base64
+                if content is not None:
+                    # 新格式：content list，同时提取纯文本给 _trim_messages 算长度
+                    text_parts = ''.join(b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text')
+                    entry = {"role": "user", "prompt": text_parts, "content": content}
+                else:
+                    # 旧格式兼容
+                    entry = {"role": "user", "prompt": prompt}
+                    if image_base64: entry["image"] = image_base64
                 self.raw_msgs.append(entry)
                 messages = self.make_messages(self.raw_msgs)
+            _t0 = time.time()
             for chunk in self.raw_ask(messages, model):
-                content += chunk; yield chunk
-            if not content.startswith("Error:"): self.raw_msgs.append({"role": "assistant", "prompt": content})
+                resp_content += chunk; yield chunk
+            if not resp_content.startswith("Error:"): self.raw_msgs.append({"role": "assistant", "prompt": resp_content})
+            try:
+                from llm_stats import LLMStatsLogger
+                _s = LLMStatsLogger.get()
+                _s.log_iteration(_s._current_iteration, model or self.default_model, messages, resp_content, time.time() - _t0)
+            except Exception:
+                pass
         return _ask_gen() if stream else ''.join(list(_ask_gen()))
 
 class LLMSession:
@@ -585,12 +614,34 @@ class ToolClient:
 
     def chat(self, messages, tools=None):
         is_multimodal = self._should_use_structured_messages(messages)
-        image_base64 = self._extract_image_from_messages(messages) if is_multimodal else None
-        full_prompt = self._build_protocol_prompt(messages, tools)
-        print("Full prompt length:", len(full_prompt), 'chars', '[+image]' if image_base64 else '')
-        prompt_log = full_prompt + ('\n[Image attached]' if image_base64 else '')
-        gen = self.backend.ask(full_prompt, stream=True, image_base64=image_base64)
-        _write_llm_log('Prompt', prompt_log)
+        
+        if is_multimodal:
+            # 多模态路径：提取最后一条 user 消息的 content list，保留全部图片和顺序
+            last_user_content = None
+            for m in reversed(messages):
+                if m.get('role') == 'user' and isinstance(m.get('content'), list):
+                    last_user_content = m['content']
+                    break
+            if last_user_content is not None:
+                prefix = self._build_protocol_prompt(messages, tools, exclude_last_user_content=True)
+                claude_blocks = self._build_multimodal_content(prefix, last_user_content)
+                img_count = sum(1 for b in claude_blocks if isinstance(b, dict) and b.get('type') == 'image')
+                text_len = sum(len(b.get('text', '')) for b in claude_blocks if isinstance(b, dict) and b.get('type') == 'text')
+                print("Full prompt length:", text_len, 'chars', f'[+{img_count} images]')
+                _write_llm_log('Prompt', prefix + f'\n[Multimodal content: {img_count} images]')
+                gen = self.backend.ask(content=claude_blocks, stream=True)
+            else:
+                # 回退：检测到多模态但未找到 content list
+                full_prompt = self._build_protocol_prompt(messages, tools)
+                print("Full prompt length:", len(full_prompt), 'chars')
+                _write_llm_log('Prompt', full_prompt)
+                gen = self.backend.ask(full_prompt, stream=True)
+        else:
+            full_prompt = self._build_protocol_prompt(messages, tools)
+            print("Full prompt length:", len(full_prompt), 'chars')
+            _write_llm_log('Prompt', full_prompt)
+            gen = self.backend.ask(full_prompt, stream=True)
+        
         raw_text = ''; summarytag = '[NextWillSummary]'
         for chunk in gen:
             raw_text += chunk
@@ -617,6 +668,27 @@ class ToolClient:
                         return (part.get('source') or {}).get('data', '')
                 break
         return None
+
+    def _build_multimodal_content(self, prefix, content_blocks):
+        """将 protocol prompt 前缀与 OpenAI 格式的 content blocks 合并为 Claude 格式的 content list。"""
+        claude_blocks = [{"type": "text", "text": prefix}]
+        for block in content_blocks:
+            if not isinstance(block, dict): continue
+            if block.get('type') == 'text':
+                claude_blocks.append(block)
+            elif block.get('type') == 'image_url':
+                url = (block.get('image_url') or {}).get('url', '')
+                if ',' in url:
+                    data = url.split(',', 1)[1]
+                    media_type = 'image/png'
+                    if url.startswith('data:'):
+                        try: media_type = url.split(';')[0].split(':')[1]
+                        except: pass
+                    claude_blocks.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
+            elif block.get('type') == 'image':
+                claude_blocks.append(block)  # 已是 Claude 格式
+        claude_blocks.append({"type": "text", "text": "\n\n=== ASSISTANT ===\n"})
+        return claude_blocks
 
     def _estimate_content_len(self, content):
         if isinstance(content, str): return len(content)
@@ -693,7 +765,7 @@ class ToolClient:
                 logged.append(msg)
         return json.dumps(logged, ensure_ascii=False, indent=2)
 
-    def _build_protocol_prompt(self, messages, tools):
+    def _build_protocol_prompt(self, messages, tools, exclude_last_user_content=False):
         system_content = next((m['content'] for m in messages if m['role'].lower() == 'system'), "")
         history_msgs = [m for m in messages if m['role'].lower() != 'system']
         tool_instruction = self._prepare_tool_instruction(tools)
@@ -701,17 +773,29 @@ class ToolClient:
         prompt = ""
         if system_content: prompt += f"=== SYSTEM ===\n{system_content}\n"
         prompt += f"{tool_instruction}\n\n"
-        for m in history_msgs:
+        # 找最后一条 user 消息的索引
+        last_user_idx = -1
+        if exclude_last_user_content:
+            for i in range(len(history_msgs) - 1, -1, -1):
+                if history_msgs[i]['role'] == 'user':
+                    last_user_idx = i
+                    break
+        for i, m in enumerate(history_msgs):
             role = "USER" if m['role'] == 'user' else "ASSISTANT"
-            content = m['content']
-            if isinstance(content, list):
-                content = '\n'.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type') == 'text')
-            prompt += f"=== {role} ===\n{content}\n\n"
+            if i == last_user_idx:
+                # 多模态消息：只输出标签头，内容由 content list 直通
+                prompt += f"=== {role} ===\n"
+            else:
+                content = m['content']
+                if isinstance(content, list):
+                    content = '\n'.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type') == 'text')
+                prompt += f"=== {role} ===\n{content}\n\n"
             self.total_cd_tokens += self._estimate_content_len(m['content'])
             
         if self.total_cd_tokens > 6000: self.last_tools = ''
 
-        prompt += "=== ASSISTANT ===\n" 
+        if not exclude_last_user_content:
+            prompt += "=== ASSISTANT ===\n" 
         return prompt
 
     def _parse_mixed_response(self, text):

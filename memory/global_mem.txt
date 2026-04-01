@@ -1,3 +1,0 @@
-## [环境]
-- OS: macOS
-- 浏览器: Chrome + Tampermonkey

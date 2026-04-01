@@ -10,6 +10,7 @@ class RemoteDev:
         self.user = config.get('user', 'root')
         self.password = config.get('password')
         self.project = config.get('project_path', '')
+        self.envs = config.get('envs', '')  # conda环境名，设置后exec自动激活
         self._ssh = None
         self._sftp = None
     
@@ -28,8 +29,11 @@ class RemoteDev:
         return os.path.join(self.project, path)
     
     def exec(self, cmd, timeout=30):
-        """远程执行命令，返回 (stdout, stderr, exit_code)"""
+        """远程执行命令，返回 (stdout, stderr, exit_code)。若配置了envs则自动激活conda环境"""
         self._connect()
+        if self.envs:
+            env_bin = f'/root/miniconda3/envs/{self.envs}/bin'
+            cmd = f'export PATH={env_bin}:$PATH && {cmd}'
         _, stdout, stderr = self._ssh.exec_command(cmd, timeout=timeout)
         code = stdout.channel.recv_exit_status()
         out = stdout.read().decode('utf-8', errors='replace')

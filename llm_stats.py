@@ -121,6 +121,11 @@ class LLMStatsLogger:
         self.filepath = os.path.join(os.path.dirname(__file__), "temp", f"llm_stats_{pid}.jsonl")
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
         self.qa_index = 0
+        self._current_iteration = 0
+    
+    def set_iteration(self, iteration):
+        """设置当前迭代轮次，供底层Session调用log_iteration时使用"""
+        self._current_iteration = iteration
     
     def new_qa(self):
         """开始新的QA"""

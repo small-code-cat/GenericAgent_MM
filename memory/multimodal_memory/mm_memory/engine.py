@@ -307,7 +307,7 @@ class MemoryEngine:
     def recall(self, query: str = "",
                image_data: Optional[bytes] = None,
                mime_type: str = "image/png",
-               top_k: int = 5, threshold: float = 0.4,
+               top_k: int = 5, threshold: float = 0.5,
                source_type: Optional[str] = None,
                expand_groups: bool = True) -> List[SearchResult]:
         """多模态语义检索记忆
@@ -418,13 +418,10 @@ class MemoryEngine:
 
         final_results.sort(key=lambda r: r.score, reverse=True)
 
-        # Group 平均分过滤：扩展项不参与平均分计算，只用直接命中项的分数判断组相关性
+        # Group 平均分过滤：所有项（含扩展项）均参与平均分计算
         from collections import defaultdict
         group_scores: dict[str, list[float]] = defaultdict(list)
         for r in final_results:
-            # 扩展项是「搭便车」跟着命中项返回的，不应反过来影响组是否保留的判断
-            if r.item.id in expanded_ids:
-                continue
             group_scores[r.item.group_id].append(r.score)
 
         passing_groups = set()
@@ -437,6 +434,8 @@ class MemoryEngine:
 
         final_results = [r for r in final_results if r.item.group_id in passing_groups]
 
+        # ── 7) 按分数降序排列，直接返回所有通过筛选的 item ──
+        final_results.sort(key=lambda r: r.score, reverse=True)
         return final_results
 
     @staticmethod
