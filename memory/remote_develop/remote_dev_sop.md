@@ -11,18 +11,24 @@ r = connect('ssh1')  # ssh_config.py中的配置名
 ## API
 | 方法 | 说明 | 示例 |
 |------|------|------|
-| `r.exec(cmd)` | 执行命令→(stdout,stderr,code) | `r.exec('python train.py')` |
-| `r.read(path, keyword=)` | 读文件，可选关键字定位 | `r.read('config.yaml')` |
+| `r.exec(cmd, timeout=30, cwd=None)` | 执行命令→(stdout,stderr,code)，可指定工作目录 | `r.exec('python train.py', cwd='/opt/proj')` |
+| `r.read(path, keyword=, start=, count=200)` | 读文件，可选关键字定位或按行范围读取(start从1开始) | `r.read('a.py', start=100, count=20)` |
 | `r.write(path, content, mode=)` | 写文件(overwrite/append) | `r.write('a.py', code)` |
-| `r.patch(path, old, new)` | 精准替换文件片段 | `r.patch('a.py', 'v1', 'v2')` |
+| `r.patch(path, old, new)` | 精准替换文件片段(old须唯一) | `r.patch('a.py', 'v1', 'v2')` |
+| `r.replace_lines(path, start, end, new)` | 按行号范围替换(含start和end行) | `r.replace_lines('a.py', 37, 100, new_code)` |
+| `r.upload(local, remote)` | 上传本地文件到远程 | `r.upload('./prompt.txt', '/tmp/prompt.txt')` |
+| `r.download(remote, local)` | 下载远程文件到本地 | `r.download('model.pt', './model.pt')` |
 | `r.ls(path)` | 列目录 | `r.ls('demo/')` |
 | `r.search(kw, path, file_pattern)` | grep搜索 | `r.search('import', '.', '*.py')` |
 | `r.close()` | 关闭连接 | 用完必须close |
 
 ## 注意
 - path支持相对路径（基于project_path）和绝对路径
-- patch要求old_content在文件中唯一
+- patch要求old_content在文件中唯一，适合小片段替换
+- 大段代码替换（如整个函数/多行字符串）优先用 `r.replace_lines()`：先 `r.read()` 确认行号范围，再一步替换，避免转义问题
+- 本地写好文件后用 `r.upload()` 传到远程，比 `r.write()` 传大内容更可靠
 - exec默认timeout=30s，长任务需加大：`r.exec(cmd, timeout=300)`
+- exec支持cwd参数指定工作目录：`r.exec('ls', cwd='/opt')`
 - 每次code_run结束后连接会断开，下次需重新connect
 - ssh_config中可配置`envs`字段（conda环境名），设置后exec自动将该环境bin加入PATH，python3/pip等命令直接使用该环境
 

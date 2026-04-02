@@ -28,9 +28,11 @@ class RemoteDev:
             return path
         return os.path.join(self.project, path)
     
-    def exec(self, cmd, timeout=30):
-        """远程执行命令，返回 (stdout, stderr, exit_code)。若配置了envs则自动激活conda环境"""
+    def exec(self, cmd, timeout=30, cwd=None):
+        """远程执行命令，返回 (stdout, stderr, exit_code)。cwd:工作目录; envs自动激活conda"""
         self._connect()
+        if cwd:
+            cmd = f'cd {cwd} && {cmd}'
         if self.envs:
             env_bin = f'/root/miniconda3/envs/{self.envs}/bin'
             cmd = f'export PATH={env_bin}:$PATH && {cmd}'
@@ -40,19 +42,23 @@ class RemoteDev:
         err = stderr.read().decode('utf-8', errors='replace')
         return out, err, code
     
-    def read(self, path, keyword=None):
-        """读取远程文件内容，可选关键字搜索"""
+    def read(self, path, keyword=None, start=None, count=200):
+        """读取远程文件内容。keyword:关键字搜索; start:起始行号(从1开始), count:读取行数"""
         self._connect()
         with self._sftp.open(self._abs(path), 'r') as f:
             content = f.read().decode('utf-8', errors='replace')
+        lines = content.split('\n')
         if keyword:
-            lines = content.split('\n')
             for i, line in enumerate(lines):
                 if keyword.lower() in line.lower():
-                    start = max(0, i - 5)
-                    end = min(len(lines), i + 15)
-                    return '\n'.join(f"{j+1}| {lines[j]}" for j in range(start, end))
+                    s = max(0, i - 5)
+                    e = min(len(lines), i + 15)
+                    return '\n'.join(f"{j+1}| {lines[j]}" for j in range(s, e))
             return f"[keyword '{keyword}' not found]"
+        if start is not None:
+            s = max(0, start - 1)
+            e = min(len(lines), s + count)
+            return '\n'.join(f"{j+1}| {lines[j]}" for j in range(s, e))
         return content
     
     def write(self, path, content, mode='overwrite'):
@@ -79,6 +85,27 @@ class RemoteDev:
             return f"[ERROR] old_content found {count} times, must be unique"
         new = content.replace(old_content, new_content, 1)
         return self.write(path, new)
+    
+    def replace_lines(self, path, start, end, new_content):
+        """替换远程文件第start到end行(含)为new_content。先read确认行号再调用"""
+        content = self.read(self._abs(path))
+        lines = content.split('\n')
+        if start < 1 or end > len(lines):
+            return f"[ERROR] line range {start}-{end} out of bounds (total {len(lines)} lines)"
+        lines[start-1:end] = new_content.split('\n')
+        return self.write(path, '\n'.join(lines))
+    
+    def upload(self, local_path, remote_path):
+        """上传本地文件到远程服务器"""
+        self._connect()
+        self._sftp.put(local_path, self._abs(remote_path))
+        return f"[uploaded {local_path} -> {self._abs(remote_path)}]"
+    
+    def download(self, remote_path, local_path):
+        """下载远程文件到本地"""
+        self._connect()
+        self._sftp.get(self._abs(remote_path), local_path)
+        return f"[downloaded {self._abs(remote_path)} -> {local_path}]"
     
     def ls(self, path='.'):
         """列出远程目录"""
