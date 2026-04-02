@@ -42,19 +42,39 @@ class RemoteDev:
         err = stderr.read().decode('utf-8', errors='replace')
         return out, err, code
     
-    def read(self, path, keyword=None, start=None, count=200):
-        """读取远程文件内容。keyword:关键字搜索; start:起始行号(从1开始), count:读取行数"""
+    def read(self, path, keyword=None, start=None, count=200, context=None, match_index=1):
+        """读取远程文件内容。
+        keyword:关键字搜索; start:起始行号(从1开始), count:读取行数
+        context:keyword模式下上下文行数(默认前5后15,可传int统一设或(before,after)元组)
+        match_index:keyword模式下第几个匹配(从1开始,0=返回所有匹配位置摘要)"""
         self._connect()
         with self._sftp.open(self._abs(path), 'r') as f:
             content = f.read().decode('utf-8', errors='replace')
         lines = content.split('\n')
         if keyword:
-            for i, line in enumerate(lines):
-                if keyword.lower() in line.lower():
-                    s = max(0, i - 5)
-                    e = min(len(lines), i + 15)
-                    return '\n'.join(f"{j+1}| {lines[j]}" for j in range(s, e))
-            return f"[keyword '{keyword}' not found]"
+            # 解析context参数
+            if context is None:
+                before, after = 5, 15
+            elif isinstance(context, tuple):
+                before, after = context
+            else:
+                before = after = int(context)
+            # 找所有匹配
+            matches = [i for i, line in enumerate(lines) if keyword.lower() in line.lower()]
+            if not matches:
+                return f"[keyword '{keyword}' not found]"
+            if match_index == 0:
+                # 返回所有匹配位置摘要
+                summary = f"[{len(matches)} matches for '{keyword}']:\n"
+                summary += '\n'.join(f"  match {k+1}: line {m+1} | {lines[m].strip()[:80]}" for k, m in enumerate(matches))
+                return summary
+            # 返回第match_index个匹配的上下文
+            idx = min(match_index, len(matches)) - 1
+            i = matches[idx]
+            s = max(0, i - before)
+            e = min(len(lines), i + after + 1)
+            header = f"[match {idx+1}/{len(matches)}] " if len(matches) > 1 else ""
+            return header + '\n'.join(f"{j+1}| {lines[j]}" for j in range(s, e))
         if start is not None:
             s = max(0, start - 1)
             e = min(len(lines), s + count)

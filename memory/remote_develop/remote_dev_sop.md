@@ -12,7 +12,7 @@ r = connect('ssh1')  # ssh_config.py中的配置名
 | 方法 | 说明 | 示例 |
 |------|------|------|
 | `r.exec(cmd, timeout=30, cwd=None)` | 执行命令→(stdout,stderr,code)，可指定工作目录 | `r.exec('python train.py', cwd='/opt/proj')` |
-| `r.read(path, keyword=, start=, count=200)` | 读文件，可选关键字定位或按行范围读取(start从1开始) | `r.read('a.py', start=100, count=20)` |
+| `r.read(path, keyword=, start=, count=200, context=, match_index=1)` | 读文件，可选关键字定位或按行范围读取(start从1开始)。context:keyword上下文行数(int或(before,after)元组,默认前5后15); match_index:第几个匹配(0=返回所有匹配摘要) | `r.read('a.py', keyword='def main', context=30, match_index=2)` |
 | `r.write(path, content, mode=)` | 写文件(overwrite/append) | `r.write('a.py', code)` |
 | `r.patch(path, old, new)` | 精准替换文件片段(old须唯一) | `r.patch('a.py', 'v1', 'v2')` |
 | `r.replace_lines(path, start, end, new)` | 按行号范围替换(含start和end行) | `r.replace_lines('a.py', 37, 100, new_code)` |
@@ -31,6 +31,15 @@ r = connect('ssh1')  # ssh_config.py中的配置名
 - exec支持cwd参数指定工作目录：`r.exec('ls', cwd='/opt')`
 - 每次code_run结束后连接会断开，下次需重新connect
 - ssh_config中可配置`envs`字段（conda环境名），设置后exec自动将该环境bin加入PATH，python3/pip等命令直接使用该环境
+
+## 复杂修改推荐工作流
+当修改涉及多行字符串、特殊字符（引号/换行/转义）或多处patch时：
+1. `r.download(remote, './temp_file')` 下载到本地
+2. 本地用 `file_patch` / `file_read` 精确修改（本地工具更可靠）
+3. `r.upload('./temp_file', remote)` 上传回远程
+4. `r.read(path, keyword='关键内容')` 验证修改生效
+
+简单单行替换直接用 `r.patch()` 即可，无需走此流程。
 
 ## 远程多文件开发避坑（写代码前必做）
 1. **环境探测先行**: 写代码前先 `r.exec('pip list')` + `r.exec('python --version')` 摸清已装包，避免写完才发现缺依赖
