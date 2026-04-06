@@ -141,6 +141,31 @@ html, body { height:100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe
 .preview-close { position:absolute; top:2px; right:2px; width:20px; height:20px; border-radius:50%; background:rgba(0,0,0,.65); color:#fff; border:none; font-size:13px; line-height:20px; text-align:center; cursor:pointer; padding:0; }
 .preview-close:hover { background:rgba(220,50,50,.85); }
 
+/* PDF Preview */
+.pdf-preview-area { display:flex; flex-wrap:wrap; gap:8px; padding:0 4px; margin-bottom:8px; }
+.pdf-preview-area:empty { display:none; }
+.pdf-preview-item { position:relative; display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; border:1px solid var(--border-color); background:var(--bg-tertiary); max-width:280px; transition:border-color .2s; }
+.pdf-preview-item:hover { border-color:var(--accent); }
+.pdf-preview-item .pdf-icon { font-size:28px; flex-shrink:0; }
+.pdf-preview-item .pdf-info { flex:1; min-width:0; }
+.pdf-preview-item .pdf-name { font-size:12px; font-weight:500; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pdf-preview-item .pdf-size { font-size:10px; color:var(--text-muted); margin-top:2px; }
+.pdf-preview-item .pdf-status { font-size:10px; margin-top:2px; }
+.pdf-preview-item .pdf-status.uploading { color:var(--accent); display:flex; align-items:center; gap:6px; }
+.pdf-preview-item .pdf-status.success { color:var(--success); }
+.pdf-preview-item .pdf-status.error { color:var(--danger); }
+
+/* Circular Progress Ring */
+.pdf-progress-ring { width:28px; height:28px; flex-shrink:0; }
+.pdf-progress-ring .ring-bg { fill:none; stroke:var(--border-color); stroke-width:3; }
+.pdf-progress-ring .ring-fg { fill:none; stroke:var(--accent); stroke-width:3; stroke-linecap:round; transition:stroke-dashoffset .3s ease; transform:rotate(-90deg); transform-origin:50% 50%; }
+.pdf-progress-ring.indeterminate .ring-fg { animation: ring-spin 1.2s linear infinite; stroke-dasharray:15 48; stroke-dashoffset:0; }
+@keyframes ring-spin { to { transform: rotate(270deg); transform-origin:50% 50%; } }
+.pdf-progress-text { font-size:10px; font-weight:600; color:var(--accent); min-width:28px; text-align:right; }
+.pdf-elapsed { font-size:9px; color:var(--text-muted); margin-left:4px; }
+.pdf-preview-item .pdf-close { position:absolute; top:4px; right:4px; width:18px; height:18px; border-radius:50%; background:rgba(0,0,0,.5); color:#fff; border:none; font-size:12px; line-height:18px; text-align:center; cursor:pointer; padding:0; }
+.pdf-preview-item .pdf-close:hover { background:rgba(220,50,50,.85); }
+
 /* Input Toolbar */
 .input-toolbar { display:flex; gap:6px; padding:6px 4px 0; }
 .toolbar-btn { background:none; border:1px solid var(--border-color); color:var(--text-secondary); padding:5px 12px; border-radius:8px; font-size:12px; cursor:pointer; transition:all .15s; display:flex; align-items:center; gap:4px; }
@@ -275,6 +300,7 @@ html, body { height:100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe
       <button class="sidebar-btn" onclick="reinjectPrompt()">🔄 重新注入 System Prompt</button>
       <button class="sidebar-btn" onclick="window.open('token_stats.html','_blank')">📊 Token 用量统计</button>
       <button class="sidebar-btn" onclick="window.open('memory_manager.html','_blank')">🧠 多模态记忆库</button>
+      <button class="sidebar-btn" onclick="window.open('pdf_knowledge.html','_blank')">📚 PDF 知识库</button>
 </div>
 
     <div class="sidebar-section">
@@ -310,14 +336,17 @@ html, body { height:100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe
     <div class="input-area">
       <div class="input-wrap">
         <div class="image-preview-area" id="imagePreviewArea"></div>
-        <textarea class="input-box" id="inputBox" placeholder="输入指令... (Enter 发送, Shift+Enter 换行, 粘贴图片)" rows="1"></textarea>
+        <div class="pdf-preview-area" id="pdfPreviewArea"></div>
+        <textarea class="input-box" id="inputBox" placeholder="输入指令... (Enter 发送, Shift+Enter 换行, 可粘贴图片/PDF)" rows="1"></textarea>
         <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="发送">↑</button>
       </div>
       <div class="input-toolbar">
         <button class="toolbar-btn" id="voiceBtn" onclick="toggleVoice()" title="语音输入">🎤 语音</button>
         <button class="toolbar-btn" id="cameraBtn" onclick="toggleCamera()" title="摄像头截图">📷 摄像头</button>
+        <button class="toolbar-btn" id="pdfBtn" onclick="triggerPDFUpload()" title="上传PDF文件">📎 PDF</button>
+        <input type="file" id="pdfFileInput" accept=".pdf" multiple style="display:none" onchange="handlePDFFileSelect(event)">
       </div>
-      <div class="input-hint">Enter 发送 · Shift+Enter 换行 · 可粘贴图片</div>
+      <div class="input-hint">Enter 发送 · Shift+Enter 换行 · 可粘贴图片/PDF · 支持拖拽PDF</div>
     </div>
   </div>
 </div>
@@ -336,6 +365,7 @@ let isStreaming = false;
 let messages = [];
 let composing = false;
 let pendingImages = [];  // [{dataUrl, file}]
+let pendingPDFs = [];    // [{file, name, size, status, id}]
 let mediaStream = null;
 let cameraActive = false;
 let recognition = null;
@@ -640,12 +670,15 @@ async function sendMessage() {
   const input = document.getElementById('inputBox');
   const text = input.value.trim();
   const images = [...pendingImages];
-  if ((!text && images.length === 0) || isStreaming) return;
+  const pdfs = [...pendingPDFs];
+  if ((!text && images.length === 0 && pdfs.length === 0) || isStreaming) return;
 
   input.value = '';
   autoResize(input);
   pendingImages = [];
   renderImagePreviews();
+  pendingPDFs = [];
+  renderPDFPreviews();
   isStreaming = true;
   updateSendBtn();
 
@@ -655,6 +688,13 @@ async function sendMessage() {
     userDisplay += '<div class="msg-images">' + images.map(img =>
       `<img src="${img.dataUrl}" alt="uploaded">`
     ).join('') + '</div>';
+  }
+  // Show attached PDF names
+  if (pdfs.length > 0) {
+    const pdfNames = pdfs.filter(p => p.status === 'success').map(p => '📄 ' + escapeHtml(p.name));
+    if (pdfNames.length > 0) {
+      userDisplay += '<div class="msg-pdfs" style="margin-bottom:4px;color:var(--text-secondary);font-size:0.85em">' + pdfNames.join(' &nbsp; ') + ' (已入库)</div>';
+    }
   }
   userDisplay += escapeHtml(text);
   const imgDataUrls = images.map(img => img.dataUrl);
@@ -852,6 +892,231 @@ function handleImageUpload() {
   fileInput.click();
 }
 
+// ===== PDF Upload & Preview =====
+let _pdfIdCounter = 0;
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function triggerPDFUpload() {
+  document.getElementById('pdfFileInput').click();
+}
+
+function handlePDFFileSelect(e) {
+  const files = e.target.files;
+  if (!files || files.length === 0) return;
+  for (const file of files) {
+    if (file.type !== 'application/pdf') {
+      toast('仅支持 PDF 文件: ' + file.name, 'error');
+      continue;
+    }
+    addPDFAndUpload(file);
+  }
+  e.target.value = ''; // reset so same file can be selected again
+}
+
+function addPDFAndUpload(file) {
+  if (pendingPDFs.length >= 5) {
+    toast('最多同时上传5个PDF', 'error');
+    return;
+  }
+  const id = 'pdf_' + (++_pdfIdCounter);
+  const entry = { file, name: file.name, size: file.size, status: 'uploading', id, result: null };
+  pendingPDFs.push(entry);
+  renderPDFPreviews();
+  uploadPDFFile(entry);
+}
+
+function uploadPDFFile(entry) {
+  entry.progress = 0;
+  entry.progressMsg = '正在上传...';
+  entry._startTime = Date.now();
+  const formData = new FormData();
+  formData.append('file', entry.file);
+  const xhr = new XMLHttpRequest();
+  entry._xhr = xhr;
+
+  // 上传阶段进度（占总进度 0~5%，因为上传很快）
+  xhr.upload.addEventListener('progress', (e) => {
+    if (e.lengthComputable) {
+      entry.progress = Math.round((e.loaded / e.total) * 5);
+      entry.progressMsg = '正在上传...';
+      renderPDFPreviews();
+    }
+  });
+
+  xhr.addEventListener('load', () => {
+    try {
+      const data = JSON.parse(xhr.responseText);
+      if (xhr.status >= 200 && xhr.status < 300 && data.task_id) {
+        // 上传成功，开始轮询服务端处理进度
+        entry.progress = 5;
+        entry.progressMsg = '已上传，等待处理...';
+        entry.taskId = data.task_id;
+        renderPDFPreviews();
+        pollPDFProgress(entry);
+      } else {
+        entry.status = 'error';
+        entry.errorMsg = data.error || data.message || '上传失败';
+        toast('PDF 上传失败: ' + entry.errorMsg, 'error');
+        renderPDFPreviews();
+      }
+    } catch (e) {
+      entry.status = 'error';
+      entry.errorMsg = '响应解析失败';
+      toast('PDF 上传失败: ' + entry.errorMsg, 'error');
+      renderPDFPreviews();
+    }
+  });
+
+  xhr.addEventListener('error', () => {
+    entry.status = 'error';
+    entry.errorMsg = '网络错误';
+    toast('PDF 上传失败: ' + entry.errorMsg, 'error');
+    renderPDFPreviews();
+  });
+
+  xhr.addEventListener('abort', () => {
+    entry.status = 'error';
+    entry.errorMsg = '上传已取消';
+    renderPDFPreviews();
+  });
+
+  xhr.open('POST', '/api/upload_pdf');
+  xhr.send(formData);
+}
+
+function _fmtElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + '秒';
+  return Math.floor(s / 60) + '分' + (s % 60) + '秒';
+}
+
+function pollPDFProgress(entry) {
+  if (!entry.taskId || entry.status !== 'uploading') return;
+  fetch('/api/pdf_progress/' + entry.taskId)
+    .then(r => r.json())
+    .then(data => {
+      if (entry.status !== 'uploading') return;
+      if (data.status === 'done' && data.result) {
+        if (data.result.status === 'success') {
+          entry.status = 'success';
+          entry.progress = 100;
+          entry.result = data.result;
+          const elapsed = _fmtElapsed(Date.now() - (entry._startTime || Date.now()));
+          toast('PDF 已入库: ' + entry.name + ' (' + elapsed + ')', 'success');
+        } else {
+          entry.status = 'error';
+          entry.errorMsg = data.result.message || '处理失败';
+          toast('PDF 处理失败: ' + entry.errorMsg, 'error');
+        }
+      } else {
+        const stage = data.stage || '';
+        const cur = data.current || 0, tot = data.total || 0;
+        // 进度映射: convert 5~50%, embed 50~95%
+        if (stage === 'convert') {
+          entry._stageLabel = '转换页面';
+          if (tot > 0) {
+            entry.progress = 5 + Math.round((cur / tot) * 45);
+            entry.progressMsg = '转换页面 ' + cur + '/' + tot;
+          } else {
+            entry.progress = 5;
+            entry.progressMsg = '正在解析 PDF...';
+            entry._indeterminate = true;
+          }
+        } else if (stage === 'embed') {
+          entry._indeterminate = false;
+          entry._stageLabel = '向量入库';
+          if (tot > 0) {
+            entry.progress = 50 + Math.round((cur / tot) * 45);
+            entry.progressMsg = '向量入库 ' + cur + '/' + tot;
+          } else {
+            entry.progress = 50;
+            entry.progressMsg = '准备入库...';
+          }
+        } else {
+          entry.progressMsg = data.message || '处理中...';
+        }
+        setTimeout(() => pollPDFProgress(entry), 800);
+      }
+      renderPDFPreviews();
+    })
+    .catch(() => {
+      setTimeout(() => pollPDFProgress(entry), 2000);
+    });
+}
+
+function renderPDFPreviews() {
+  const container = document.getElementById('pdfPreviewArea');
+  if (!container) return;
+  if (pendingPDFs.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = pendingPDFs.map((p, i) => {
+    let statusHtml = '';
+    if (p.status === 'uploading') {
+      const pct = p.progress || 0;
+      const r = 10, c = 2 * Math.PI * r;
+      const offset = c - (pct / 100) * c;
+      const msg = p.progressMsg || (pct + '%');
+      const indet = p._indeterminate ? ' indeterminate' : '';
+      const elapsed = p._startTime ? ' <span class="pdf-elapsed">' + _fmtElapsed(Date.now() - p._startTime) + '</span>' : '';
+      statusHtml = '<div class="pdf-status uploading">' +
+        '<svg class="pdf-progress-ring' + indet + '" viewBox="0 0 28 28">' +
+        '<circle class="ring-bg" cx="14" cy="14" r="' + r + '"/>' +
+        '<circle class="ring-fg" cx="14" cy="14" r="' + r + '" stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + offset.toFixed(2) + '"/>' +
+        '</svg>' +
+        '<span class="pdf-progress-text">' + escapeHtml(msg) + '</span>' + elapsed +
+        '</div>';
+    }
+    else if (p.status === 'success') statusHtml = '<div class="pdf-status success">✅ 已入库</div>';
+    else if (p.status === 'error') statusHtml = '<div class="pdf-status error">❌ ' + escapeHtml(p.errorMsg || '失败') + '</div>';
+    return `<div class="pdf-preview-item">
+      <div class="pdf-icon">📄</div>
+      <div class="pdf-info">
+        <div class="pdf-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+        <div class="pdf-size">${formatFileSize(p.size)}</div>
+        ${statusHtml}
+      </div>
+      <button class="pdf-close" onclick="removePDFPreview(${i})" title="移除">&times;</button>
+    </div>`;
+  }).join('');
+}
+
+function removePDFPreview(index) {
+  pendingPDFs.splice(index, 1);
+  renderPDFPreviews();
+}
+
+function handlePDFPaste(e) {
+  const items = e.clipboardData?.items;
+  if (!items) return false;
+  for (const item of items) {
+    if (item.type === 'application/pdf') {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (file) addPDFAndUpload(file);
+      return true;
+    }
+  }
+  // Check for PDF files in files list (some browsers)
+  const files = e.clipboardData?.files;
+  if (files) {
+    for (const file of files) {
+      if (file.type === 'application/pdf' || file.name?.endsWith('.pdf')) {
+        e.preventDefault();
+        addPDFAndUpload(file);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function toggleVoice() {
   const btn = document.getElementById('voiceBtn');
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -1047,7 +1312,28 @@ inputBox.addEventListener('keydown', e => {
   }
 });
 inputBox.addEventListener('input', () => autoResize(inputBox));
-inputBox.addEventListener('paste', handleImagePaste);
+inputBox.addEventListener('paste', (e) => {
+  if (!handlePDFPaste(e)) handleImagePaste(e);
+});
+
+// Drag & drop PDF support
+const inputWrapper = inputBox.closest('.input-wrapper') || inputBox.parentElement;
+inputWrapper.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); inputWrapper.classList.add('drag-over'); });
+inputWrapper.addEventListener('dragleave', (e) => { e.preventDefault(); e.stopPropagation(); inputWrapper.classList.remove('drag-over'); });
+inputWrapper.addEventListener('drop', (e) => {
+  e.preventDefault(); e.stopPropagation(); inputWrapper.classList.remove('drag-over');
+  const files = e.dataTransfer?.files;
+  if (!files) return;
+  for (const file of files) {
+    if (file.type === 'application/pdf' || file.name?.endsWith('.pdf')) {
+      addPDFAndUpload(file);
+    } else if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (ev) => addImageFromDataUrl(ev.target.result);
+      reader.readAsDataURL(file);
+    }
+  }
+});
 inputBox.focus();
 restoreChatHistory();
 

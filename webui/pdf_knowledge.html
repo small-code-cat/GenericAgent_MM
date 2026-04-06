@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📚 PDF 知识库</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1b23;
+  --surface2: #24252f;
+  --border: #2d2e3a;
+  --text: #e4e4e7;
+  --text-secondary: #9ca3af;
+  --accent: #818cf8;
+  --accent-hover: #6366f1;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --success: #10b981;
+  --warning: #f59e0b;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header h1 { font-size: 1.3em; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; gap: 12px; align-items: center; }
+.stats { font-size: .85em; color: var(--text-secondary); }
+.btn {
+  padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface2); color: var(--text); cursor: pointer;
+  font-size: .9em; transition: all .15s; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger); color: #fff; }
+.btn-sm { padding: 4px 10px; font-size: .8em; }
+.container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+/* Upload */
+.upload-zone {
+  border: 2px dashed var(--border); border-radius: 12px;
+  padding: 48px 24px; text-align: center; cursor: pointer;
+  transition: all .2s; background: var(--surface); margin-bottom: 32px;
+}
+.upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: var(--surface2); }
+.upload-zone .icon { font-size: 3em; margin-bottom: 12px; }
+.upload-zone .hint { color: var(--text-secondary); font-size: .9em; margin-top: 8px; }
+.upload-zone input[type=file] { display: none; }
+.progress-bar { display:none; margin-top:16px; background:var(--surface2); border-radius:8px; overflow:hidden; height:8px; }
+.progress-bar .fill { height:100%; background:var(--accent); transition:width .3s; width:0%; }
+.progress-info { display:none; margin-top:8px; font-size:.85em; color:var(--text-secondary); text-align:center; }
+
+.section-title { font-size:1.1em; font-weight:600; margin-bottom:16px; display:flex; align-items:center; gap:8px; }
+
+/* PDF cards */
+.pdf-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px 20px; margin-bottom: 10px;
+  display: flex; align-items: center; justify-content: space-between; transition: border-color .15s;
+}
+.pdf-card:hover { border-color: var(--accent); }
+.pdf-info { display:flex; align-items:center; gap:12px; flex:1; min-width:0; }
+.pdf-icon { font-size:1.8em; flex-shrink:0; }
+.pdf-details { min-width:0; }
+.pdf-name { font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:400px; }
+.pdf-meta { font-size:.8em; color:var(--text-secondary); margin-top:4px; display:flex; gap:16px; }
+.pdf-actions { display:flex; gap:8px; flex-shrink:0; }
+
+/* Search */
+.search-bar { display:flex; gap:10px; margin-bottom:16px; }
+.search-bar input {
+  flex:1; padding:10px 16px; border-radius:8px; border:1px solid var(--border);
+  background:var(--surface); color:var(--text); font-size:.95em; outline:none; transition:border-color .15s;
+}
+.search-bar input:focus { border-color:var(--accent); }
+.search-bar select {
+  padding:10px 12px; border-radius:8px; border:1px solid var(--border);
+  background:var(--surface); color:var(--text); font-size:.9em; outline:none;
+}
+
+/* Results */
+.result-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:16px; margin-bottom:12px; display:flex; gap:16px; transition:border-color .15s;
+}
+.result-card:hover { border-color:var(--accent); }
+.result-thumb {
+  flex-shrink:0; width:120px; height:160px; border-radius:6px; overflow:hidden;
+  background:var(--surface2); display:flex; align-items:center; justify-content:center; cursor:zoom-in;
+}
+.result-thumb img { width:100%; height:100%; object-fit:contain; }
+.result-content { flex:1; min-width:0; }
+.result-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.result-title { font-weight:500; font-size:.95em; }
+.result-score { font-size:.8em; padding:2px 8px; border-radius:12px; background:var(--surface2); }
+.result-text { font-size:.85em; color:var(--text-secondary); line-height:1.5; max-height:120px; overflow-y:auto; }
+
+.empty-state { text-align:center; padding:40px; color:var(--text-secondary); }
+.empty-state .icon { font-size:2.5em; margin-bottom:12px; }
+
+/* Toast */
+.toast {
+  position:fixed; bottom:24px; right:24px; padding:12px 20px; border-radius:8px;
+  background:var(--surface2); border:1px solid var(--border); color:var(--text);
+  font-size:.9em; z-index:1000; opacity:0; transform:translateY(10px);
+  transition:all .3s; pointer-events:none;
+}
+.toast.show { opacity:1; transform:translateY(0); }
+.toast.error { border-color:var(--danger); color:var(--danger); }
+.toast.success { border-color:var(--success); color:var(--success); }
+
+.spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* Modal */
+.modal-overlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,.85);
+  z-index:500; align-items:center; justify-content:center; cursor:zoom-out;
+}
+.modal-overlay.show { display:flex; }
+.modal-overlay img { max-width:90vw; max-height:90vh; border-radius:8px; box-shadow:0 8px 32px rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📚 PDF 知识库</h1>
+  <div class="header-actions">
+    <span class="stats" id="statsText">加载中...</span>
+    <a href="/" class="btn">← 返回主页</a>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Upload -->
+  <div class="upload-zone" id="uploadZone">
+    <div class="icon">📄</div>
+    <div>点击或拖拽 PDF 文件到此处上传</div>
+    <div class="hint">支持单个 PDF 文件，上传后将自动转换为图片并建立向量索引</div>
+    <input type="file" id="fileInput" accept=".pdf">
+  </div>
+  <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
+  <div class="progress-info" id="progressInfo"></div>
+
+  <!-- PDF List -->
+  <div style="margin-bottom:32px">
+    <div class="section-title">📋 已入库文档</div>
+    <div id="pdfList"><div class="empty-state"><div class="icon">📭</div><div>暂无文档</div></div></div>
+  </div>
+
+  <!-- Search -->
+  <div>
+    <div class="section-title">🔍 知识检索</div>
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="输入问题或关键词，在知识库中检索...">
+      <select id="pdfFilter"><option value="">全部文档</option></select>
+      <button class="btn btn-primary" onclick="doSearch()">搜索</button>
+    </div>
+    <div id="resultsArea"><div class="empty-state"><div class="icon">🔎</div><div>输入关键词开始检索</div></div></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="imageModal" onclick="this.classList.remove('show')">
+  <img id="modalImg" src="" alt="page preview">
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+function showToast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.className = 'toast', 3000);
+}
+function showImage(src) {
+  document.getElementById('modalImg').src = src;
+  document.getElementById('imageModal').classList.add('show');
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function formatTime(ts) {
+  if (!ts) return '-';
+  try { const d = new Date(ts); return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}); } catch { return ts; }
+}
+
+// Upload
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault(); uploadZone.classList.remove('dragover');
+  const f = e.dataTransfer.files;
+  if (f.length > 0 && f[0].name.toLowerCase().endsWith('.pdf')) uploadFile(f[0]);
+  else showToast('请上传 PDF 文件', 'error');
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length > 0) uploadFile(fileInput.files[0]); });
+
+async function uploadFile(file) {
+  const pb = document.getElementById('progressBar');
+  const pf = document.getElementById('progressFill');
+  const pi = document.getElementById('progressInfo');
+  pb.style.display = 'block'; pi.style.display = 'block';
+  pf.style.width = '5%';
+  pi.textContent = '正在上传 ' + file.name + ' ...';
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    // 1) 上传文件，获取 task_id
+    const resp = await fetch('/api/upload_pdf', { method: 'POST', body: form });
+    const data = await resp.json();
+    if (!resp.ok || !data.task_id) throw new Error(data.error || '上传失败');
+    pf.style.width = '10%';
+    pi.textContent = '已上传，开始处理...';
+    // 2) 轮询进度
+    const taskId = data.task_id;
+    while (true) {
+      await new Promise(r => setTimeout(r, 1500));
+      const pr = await fetch('/api/pdf_progress/' + taskId);
+      const pd = await pr.json();
+      if (!pr.ok) throw new Error(pd.error || '查询进度失败');
+      // 计算进度百分比 (10% ~ 95%)
+      if (pd.total > 0) {
+        const pct = Math.min(95, 10 + Math.round((pd.current / pd.total) * 85));
+        pf.style.width = pct + '%';
+      }
+      pi.textContent = pd.message || '处理中...';
+      if (pd.status === 'done') {
+        const result = pd.result || {};
+        if (result.status === 'error') throw new Error(result.message || '处理失败');
+        pf.style.width = '100%';
+        const pages = result.page_count || 0;
+        const fname = result.filename || file.name;
+        pi.textContent = '✅ 完成！共处理 ' + pages + ' 页';
+        showToast('"' + fname + '" 入库成功（' + pages + ' 页）', 'success');
+        loadPdfList();
+        break;
+      }
+    }
+  } catch (err) {
+    pi.textContent = '❌ ' + err.message;
+    showToast(err.message, 'error');
+  }
+  setTimeout(() => { pb.style.display='none'; pi.style.display='none'; pf.style.width='0%'; }, 4000);
+  fileInput.value = '';
+}
+
+// PDF List
+async function loadPdfList() {
+  try {
+    const resp = await fetch('/api/pdfs');
+    const data = await resp.json();
+    const list = data.pdfs || [];
+    const el = document.getElementById('pdfList');
+    const filter = document.getElementById('pdfFilter');
+    const stats = document.getElementById('statsText');
+    const totalPages = list.reduce((s,p) => s + (p.total_pages||0), 0);
+    stats.textContent = list.length + ' 个文档 · ' + totalPages + ' 页';
+    const curVal = filter.value;
+    filter.innerHTML = '<option value="">全部文档</option>';
+    list.forEach(p => { const o = document.createElement('option'); o.value = p.pdf_id; o.textContent = p.filename; filter.appendChild(o); });
+    filter.value = curVal;
+    if (list.length === 0) { el.innerHTML = '<div class="empty-state"><div class="icon">📭</div><div>暂无文档，请上传 PDF</div></div>'; return; }
+    el.innerHTML = list.map(p => '<div class="pdf-card"><div class="pdf-info"><div class="pdf-icon">📕</div><div class="pdf-details"><div class="pdf-name" title="'+esc(p.filename)+'">'+esc(p.filename)+'</div><div class="pdf-meta"><span>📄 '+p.total_pages+' 页</span><span>🕐 '+formatTime(p.created_at)+'</span><span>🆔 '+p.pdf_id.substring(0,8)+'</span></div></div></div><div class="pdf-actions"><button class="btn btn-sm" onclick="searchInPdf(\''+p.pdf_id+'\')">🔍 检索</button><button class="btn btn-sm btn-danger" onclick="deletePdf(\''+p.pdf_id+'\',\''+esc(p.filename).replace(/'/g,"\\'")+'\')">🗑️</button></div></div>').join('');
+  } catch (err) { showToast('加载列表失败: '+err.message, 'error'); }
+}
+
+async function deletePdf(id, name) {
+  if (!confirm('确定删除「'+name+'」及其所有数据？')) return;
+  try { await fetch('/api/pdfs/'+id, {method:'DELETE'}); showToast('已删除','success'); loadPdfList(); }
+  catch (err) { showToast('删除失败: '+err.message, 'error'); }
+}
+function searchInPdf(id) { document.getElementById('pdfFilter').value = id; document.getElementById('searchInput').focus(); }
+
+// Search
+document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+async function doSearch() {
+  const query = document.getElementById('searchInput').value.trim();
+  if (!query) return showToast('请输入搜索内容','error');
+  const pdfId = document.getElementById('pdfFilter').value;
+  const area = document.getElementById('resultsArea');
+  area.innerHTML = '<div class="empty-state"><div class="spinner"></div><div style="margin-top:12px">检索中...</div></div>';
+  try {
+    const resp = await fetch('/api/search_pdf', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query, top_k:5, pdf_id:pdfId}) });
+    const data = await resp.json();
+    const results = data.results || [];
+    if (results.length === 0) { area.innerHTML = '<div class="empty-state"><div class="icon">🤷</div><div>未找到相关内容</div></div>'; return; }
+    area.innerHTML = results.map(r => {
+      const imgSrc = r.image_path ? '/api/pdf_image?path='+encodeURIComponent(r.image_path) : '';
+      const sc = r.similarity > 0.7 ? 'var(--success)' : r.similarity > 0.5 ? 'var(--warning)' : 'var(--text-secondary)';
+      return '<div class="result-card">'+(imgSrc ? '<div class="result-thumb" onclick="showImage(\''+imgSrc+'\')" title="点击放大"><img src="'+imgSrc+'" loading="lazy"></div>' : '')+'<div class="result-content"><div class="result-header"><span class="result-title">📄 '+esc(r.filename||'')+' · 第 '+r.page_num+' 页</span><span class="result-score" style="color:'+sc+'">相似度 '+(r.similarity*100).toFixed(1)+'%</span></div><div class="result-text">'+esc(r.description||'（无文字描述）')+'</div></div></div>';
+    }).join('');
+  } catch (err) { area.innerHTML = '<div class="empty-state" style="color:var(--danger)">检索失败: '+esc(err.message)+'</div>'; }
+}
+
+loadPdfList();
+</script>
+</body>
+</html>

@@ -9,6 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from flask import Flask, request, Response, jsonify, send_from_directory, send_file
 from agentmain import GeneraticAgent
+from memory.pdf_knowledge import ingest_pdf, search_knowledge, list_pdfs, delete_pdf, get_pdf_info
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=os.path.join(script_dir, 'webui'), static_url_path='/static')
@@ -20,7 +21,11 @@ app.config["MAX_CONTENT_LENGTH"] = max(8, _max_mb) * 1024 * 1024
 class _NoStatusLog(logging.Filter):
     def filter(self, record):
         msg = record.getMessage()
-        return 'GET /api/status' not in msg
+        if 'GET /api/status' in msg:
+            return False
+        if 'GET /api/pdf_progress/' in msg:
+            return False
+        return True
 logging.getLogger('werkzeug').addFilter(_NoStatusLog())
 
 
@@ -281,6 +286,125 @@ def api_memory_image():
     if not os.path.isfile(abs_path):
         return 'Not found', 404
     return send_file(abs_path)
+
+
+# ── PDF 知识库管理 ──────────────────────────────────────
+
+# 全局进度追踪字典: task_id -> {stage, current, total, message, status, result}
+_pdf_tasks = {}
+
+def _run_ingest(task_id, save_path, filename):
+    """后台线程：执行 PDF 处理并更新进度"""
+    def on_progress(stage, current, total, message):
+        _pdf_tasks[task_id].update({
+            'stage': stage, 'current': current,
+            'total': total, 'message': message,
+        })
+    try:
+        result = ingest_pdf(save_path, filename=filename,
+                            progress_callback=on_progress)
+        _pdf_tasks[task_id]['status'] = 'done'
+        _pdf_tasks[task_id]['result'] = result
+    except Exception as e:
+        _pdf_tasks[task_id].update({
+            'status': 'done',
+            'result': {'status': 'error', 'message': str(e)},
+        })
+
+@app.route('/api/upload_pdf', methods=['POST'])
+def api_upload_pdf():
+    """上传 PDF 文件，异步处理（转图片 + embedding），返回 task_id 供轮询"""
+    if 'file' not in request.files:
+        return jsonify({'error': '未选择文件'}), 400
+    f = request.files['file']
+    if not f.filename or not f.filename.lower().endswith('.pdf'):
+        return jsonify({'error': '仅支持 PDF 文件'}), 400
+    # 保存到临时目录
+    temp_dir = os.path.join(script_dir, 'temp', 'pdf_uploads')
+    os.makedirs(temp_dir, exist_ok=True)
+    safe_name = f'{uuid.uuid4().hex[:8]}_{f.filename}'
+    save_path = os.path.join(temp_dir, safe_name)
+    f.save(save_path)
+    # 创建任务并启动后台处理
+    task_id = uuid.uuid4().hex[:12]
+    _pdf_tasks[task_id] = {
+        'stage': 'queued', 'current': 0, 'total': 0,
+        'message': '已上传，等待处理...', 'status': 'processing',
+        'result': None,
+    }
+    t = threading.Thread(target=_run_ingest,
+                         args=(task_id, save_path, f.filename),
+                         daemon=True)
+    t.start()
+    return jsonify({'task_id': task_id, 'status': 'processing'})
+
+@app.route('/api/pdf_progress/<task_id>', methods=['GET'])
+def api_pdf_progress(task_id):
+    """轮询 PDF 处理进度"""
+    task = _pdf_tasks.get(task_id)
+    if not task:
+        return jsonify({'error': '任务不存在'}), 404
+    resp = {
+        'status': task['status'],
+        'stage': task['stage'],
+        'current': task['current'],
+        'total': task['total'],
+        'message': task['message'],
+    }
+    if task['status'] == 'done':
+        resp['result'] = task['result']
+        # 清理已完成任务（延迟清理，避免前端漏读）
+        threading.Timer(60, lambda: _pdf_tasks.pop(task_id, None)).start()
+    return jsonify(resp)
+
+@app.route('/api/pdfs', methods=['GET'])
+def api_list_pdfs():
+    """列出所有已入库的 PDF 文档"""
+    return jsonify({'pdfs': list_pdfs()})
+
+@app.route('/api/pdfs/<pdf_id>', methods=['GET'])
+def api_get_pdf(pdf_id):
+    """获取单个 PDF 信息"""
+    info = get_pdf_info(pdf_id)
+    if not info:
+        return jsonify({'error': '文档不存在'}), 404
+    return jsonify(info)
+
+@app.route('/api/pdfs/<pdf_id>', methods=['DELETE'])
+def api_delete_pdf(pdf_id):
+    """删除 PDF 文档及其所有数据"""
+    delete_pdf(pdf_id)
+    return jsonify({'ok': True})
+
+@app.route('/api/search_pdf', methods=['POST'])
+def api_search_pdf():
+    """文本检索 PDF 知识库"""
+    data = request.get_json(silent=True) or {}
+    query = (data.get('query') or '').strip()
+    if not query:
+        return jsonify({'error': '查询不能为空'}), 400
+    top_k = int(data.get('top_k', 3))
+    pdf_id = data.get('pdf_id', '')
+    results = search_knowledge(query, top_k=top_k, pdf_id=pdf_id)
+    return jsonify({'results': results})
+
+@app.route('/api/pdf_image')
+def api_pdf_image():
+    """安全地提供 PDF 页面图片"""
+    fpath = request.args.get('path', '')
+    if not fpath:
+        return 'Missing path', 400
+    abs_path = os.path.abspath(fpath)
+    allowed_root = os.path.abspath(os.path.join(script_dir, 'memory', 'pdf_knowledge'))
+    if not abs_path.startswith(allowed_root):
+        return 'Forbidden', 403
+    if not os.path.isfile(abs_path):
+        return 'Not found', 404
+    return send_file(abs_path)
+
+@app.route('/pdf_knowledge.html')
+def pdf_knowledge_page():
+    return send_from_directory(os.path.join(script_dir, 'webui'), 'pdf_knowledge.html')
 
 
 if __name__ == '__main__':

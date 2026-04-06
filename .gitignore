@@ -110,3 +110,8 @@ memory/multimodal_memory/images/
 
 memory/remote_develop/__pycache__
 !memory/remote_develop
+
+memory/pdf_knowledge/__pycache__
+memory/pdf_knowledge/pages
+memory/pdf_knowledge/*.db
+!memory/pdf_knowledge

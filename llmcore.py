@@ -34,6 +34,30 @@ def auto_make_url(base, path):
     if b.endswith('$'): return b[:-1].rstrip('/')
     return b if b.endswith(p) else f"{b}/{p}" if re.search(r'/v\d+$', b) else f"{b}/v1/{p}"
 
+def downscale_image_bytes(raw_bytes, max_pixels=1_000_000):
+    """如果图片总像素超过 max_pixels，等比缩小后返回 (new_bytes, mime_type)。
+    不超过则原样返回。输出统一为 JPEG（有透明通道时保持 PNG）。"""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(raw_bytes))
+        w, h = img.size
+        if w * h <= max_pixels:
+            return raw_bytes, None  # None 表示 mime 不变
+        scale = (max_pixels / (w * h)) ** 0.5
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        buf = io.BytesIO()
+        if img.mode == 'RGBA':
+            img.save(buf, format='PNG', optimize=True)
+            return buf.getvalue(), 'image/png'
+        else:
+            img = img.convert('RGB') if img.mode != 'RGB' else img
+            img.save(buf, format='JPEG', quality=85)
+            return buf.getvalue(), 'image/jpeg'
+    except Exception:
+        return raw_bytes, None  # PIL 不可用或处理失败，返回原图
+
 def build_multimodal_content(prompt_text, image_paths):
     parts = []
     text = prompt_text if isinstance(prompt_text, str) else str(prompt_text or "")
@@ -47,7 +71,10 @@ def build_multimodal_content(prompt_text, image_paths):
             mime = mimetypes.guess_type(path)[0] or "image/png"
             if not mime.startswith("image/"): mime = "image/png"
             with open(path, "rb") as f:
-                data_url = f"data:{mime};base64,{base64.b64encode(f.read()).decode('ascii')}"
+                raw = f.read()
+            raw, new_mime = downscale_image_bytes(raw)
+            if new_mime: mime = new_mime
+            data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
             parts.append({"type": "image_url", "image_url": {"url": data_url}})
         except Exception as e:
             print(f"[WARN] encode image failed {path}: {e}")
@@ -67,7 +94,10 @@ def build_claude_multimodal_content(prompt_text, image_paths):
             mime = mimetypes.guess_type(path)[0] or "image/png"
             if not mime.startswith("image/"): mime = "image/png"
             with open(path, "rb") as f:
-                b64data = base64.b64encode(f.read()).decode('ascii')
+                raw = f.read()
+            raw, new_mime = downscale_image_bytes(raw)
+            if new_mime: mime = new_mime
+            b64data = base64.b64encode(raw).decode('ascii')
             parts.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64data}})
         except Exception as e:
             print(f"[WARN] encode image failed {path}: {e}")

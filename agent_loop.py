@@ -1,5 +1,6 @@
 import json, re, time, os, base64
 from llm_stats import LLMStatsLogger
+from llmcore import downscale_image_bytes
 from dataclasses import dataclass
 from typing import Any, Optional, List
 
@@ -36,7 +37,10 @@ def _build_content_with_inline_images(text: str, is_claude: bool = False):
             continue
         try:
             with open(path, 'rb') as f:
-                b64 = base64.b64encode(f.read()).decode()
+                raw = f.read()
+            raw, new_mime = downscale_image_bytes(raw)
+            if new_mime: mime = new_mime
+            b64 = base64.b64encode(raw).decode()
         except Exception:
             continue
         text_chunk = text[last_end:abs_end]
