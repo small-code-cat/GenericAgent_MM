@@ -1,4 +1,4 @@
-import os, sys, json, time, threading, queue, base64, uuid, logging
+import os, sys, json, time, threading, queue, base64, uuid, logging, sqlite3
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 try: sys.stdout.reconfigure(errors='replace')
@@ -214,6 +214,73 @@ def reinject_prompt():
     ag = get_agent()
     ag.llmclient.last_tools = ''
     return jsonify({'ok': True})
+
+# ── 多模态记忆库管理 ──────────────────────────────────────
+_mm_db_path = os.path.join(script_dir, 'memory', 'multimodal_memory', 'mm_data.db')
+
+@app.route('/memory_manager.html')
+def memory_manager():
+    return send_from_directory(os.path.join(script_dir, 'webui'), 'memory_manager.html')
+
+@app.route('/api/memories', methods=['GET'])
+def api_memories():
+    db = os.path.abspath(_mm_db_path)
+    if not os.path.exists(db):
+        return jsonify({'groups': []})
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute('SELECT id, group_id, content, source_type, source_path, created_at, embed_type FROM memories ORDER BY created_at DESC, group_id, id').fetchall()
+    conn.close()
+    groups = {}
+    for r in rows:
+        gid = r['group_id']
+        if gid not in groups:
+            groups[gid] = {'group_id': gid, 'created_at': r['created_at'], 'source_type': r['source_type'], 'image_path': '', 'knowledge': '', 'source_text': '', 'image_desc': ''}
+        item = groups[gid]
+        et = r['embed_type']
+        if et == 'knowledge':
+            item['knowledge'] = r['content'] or ''
+        elif et == 'source_text':
+            item['source_text'] = r['content'] or ''
+        elif et == 'source_image':
+            item['image_desc'] = r['content'] or ''
+            item['image_path'] = r['source_path'] or ''
+    return jsonify({'groups': list(groups.values())})
+
+@app.route('/api/memories/<group_id>', methods=['DELETE'])
+def api_delete_memory(group_id):
+    db = os.path.abspath(_mm_db_path)
+    if not os.path.exists(db):
+        return jsonify({'error': 'DB not found'}), 404
+    conn = sqlite3.connect(db)
+    # 先查出关联的图片文件路径，删除后也清理文件
+    rows = conn.execute('SELECT source_path FROM memories WHERE group_id=?', (group_id,)).fetchall()
+    conn.execute('DELETE FROM memories WHERE group_id=?', (group_id,))
+    conn.commit()
+    deleted = conn.total_changes
+    conn.close()
+    # 尝试删除关联图片文件
+    for row in rows:
+        img = row[0]
+        if img and os.path.isfile(img):
+            try: os.remove(img)
+            except: pass
+    return jsonify({'ok': True, 'deleted': deleted})
+
+@app.route('/api/memory_image')
+def api_memory_image():
+    """安全地提供记忆库中的图片文件"""
+    fpath = request.args.get('path', '')
+    if not fpath:
+        return 'Missing path', 400
+    abs_path = os.path.abspath(fpath)
+    # 安全检查：只允许访问 memory 目录下的图片
+    allowed_root = os.path.abspath(os.path.join(script_dir, 'memory'))
+    if not abs_path.startswith(allowed_root):
+        return 'Forbidden', 403
+    if not os.path.isfile(abs_path):
+        return 'Not found', 404
+    return send_file(abs_path)
 
 
 if __name__ == '__main__':

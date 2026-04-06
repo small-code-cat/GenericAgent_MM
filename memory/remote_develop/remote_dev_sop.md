@@ -23,6 +23,7 @@ r = connect('ssh1')  # ssh_config.py中的配置名
 | `r.close()` | 关闭连接 | 用完必须close |
 
 ## 注意
+- 🔴ssh_config.py在项目根目录(GenericAgent_MM/)，不在remote_develop/下。connect()源码已写明路径，别去子目录找
 - path支持相对路径（基于project_path）和绝对路径
 - patch要求old_content在文件中唯一，适合小片段替换
 - 大段代码替换（如整个函数/多行字符串）优先用 `r.replace_lines()`：先 `r.read()` 确认行号范围，再一步替换，避免转义问题
@@ -30,6 +31,7 @@ r = connect('ssh1')  # ssh_config.py中的配置名
 - exec默认timeout=30s，长任务需加大：`r.exec(cmd, timeout=300)`
 - exec支持cwd参数指定工作目录：`r.exec('ls', cwd='/opt')`
 - 每次code_run结束后连接会断开，下次需重新connect
+- 🔴本地ClashX代理(7890)会拦截直接ssh/scp命令，必须用connect()+upload()/download()传文件，禁止直接shell执行ssh/scp
 - ssh_config中可配置`envs`字段（conda环境名），设置后exec自动将该环境bin加入PATH，python3/pip等命令直接使用该环境
 
 ## 复杂修改推荐工作流
