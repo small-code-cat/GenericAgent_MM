@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cowork</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<link rel="stylesheet" href="/static/css/github-dark.min.css">
+<script src="/static/js/marked.min.js"></script>
+<script src="/static/js/highlight.min.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 :root {
@@ -372,7 +372,7 @@ let recognition = null;
 let isRecording = false;
 
 // ===== Chat Cache (IndexedDB) =====
-const MAX_CACHE_MESSAGES = 200;
+const MAX_CACHE_MESSAGES = 50;
 const IDB_NAME = 'CoworkChatDB';
 const IDB_STORE = 'chatHistory';
 const IDB_KEY = 'current';
@@ -500,8 +500,17 @@ function renderMarkdown(text) {
   let _bid = 0;
   function _ph(id) { return '%%BLOCK_' + id + '%%'; }
 
-  // Pass 1: Extract all closed blocks (multi-pass to handle nesting: inner first)
+  // Pass 1a: Extract tool_use blocks FIRST (before thinking/summary)
+  // This prevents <thinking>/<summary> tags inside tool_use JSON from being mis-extracted
   let _changed = true;
+  while (_changed) {
+    _changed = false;
+    text = text.replace(/<tool_use>([\s\S]*?)<\/tool_use>/gi, (m, c) => {
+      const id = _bid++; _blocks[id] = {type:'tool_use', content:c.trim()}; _changed = true; return '\n' + _ph(id) + '\n';
+    });
+  }
+  // Pass 1b: Extract thinking/summary blocks (inner-first via multi-pass)
+  _changed = true;
   while (_changed) {
     _changed = false;
     text = text.replace(/<thinking>([\s\S]*?)<\/thinking>/gi, (m, c) => {
@@ -509,9 +518,6 @@ function renderMarkdown(text) {
     });
     text = text.replace(/<summary>([\s\S]*?)<\/summary>/gi, (m, c) => {
       const id = _bid++; _blocks[id] = {type:'summary', content:c.trim()}; _changed = true; return '\n' + _ph(id) + '\n';
-    });
-    text = text.replace(/<tool_use>([\s\S]*?)<\/tool_use>/gi, (m, c) => {
-      const id = _bid++; _blocks[id] = {type:'tool_use', content:c.trim()}; _changed = true; return '\n' + _ph(id) + '\n';
     });
   }
 
@@ -561,25 +567,26 @@ function renderMarkdown(text) {
     }
   }
 
-  // Pass 5: Replace placeholders in all rendered blocks AND main html (multi-pass for nesting)
-  // Process from highest ID to lowest (outer blocks first, then inner)
-  const _ids = Object.keys(_renderedBlocks).map(Number).sort((a, b) => b - a);
-  for (let pass = 0; pass < _ids.length + 1; pass++) {
-    for (const id of _ids) {
-      const phPattern = _ph(id);
-      const phInP = new RegExp('<p>' + phPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<\\/p>', 'g');
-      const phPlain = new RegExp(phPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-      // Replace in main html
-      html = html.replace(phInP, _renderedBlocks[id]);
-      html = html.replace(phPlain, _renderedBlocks[id]);
-      // Also replace in all other rendered blocks (for nesting)
-      for (const otherId of _ids) {
-        if (otherId !== id) {
-          _renderedBlocks[otherId] = _renderedBlocks[otherId].replace(phInP, _renderedBlocks[id]);
-          _renderedBlocks[otherId] = _renderedBlocks[otherId].replace(phPlain, _renderedBlocks[id]);
-        }
-      }
+  // Pass 5: Replace placeholders — single ascending pass (inner blocks have lower IDs)
+  const _ids = Object.keys(_renderedBlocks).map(Number).sort((a, b) => a - b);
+  for (const id of _ids) {
+    const phPattern = _ph(id);
+    const escaped = phPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const phInP = new RegExp('<p>' + escaped + '<\\/p>', 'g');
+    const phPlain = new RegExp(escaped, 'g');
+    // Expand inner placeholders in this block's rendered content
+    for (const innerId of _ids) {
+      if (innerId >= id) break; // only lower IDs can be nested inside
+      const innerPh = _ph(innerId);
+      const innerEsc = innerPh.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const innerInP = new RegExp('<p>' + innerEsc + '<\\/p>', 'g');
+      const innerPlain = new RegExp(innerEsc, 'g');
+      _renderedBlocks[id] = _renderedBlocks[id].replace(innerInP, _renderedBlocks[innerId]);
+      _renderedBlocks[id] = _renderedBlocks[id].replace(innerPlain, _renderedBlocks[innerId]);
     }
+    // Replace in main html
+    html = html.replace(phInP, _renderedBlocks[id]);
+    html = html.replace(phPlain, _renderedBlocks[id]);
   }
 
   // Clean up any orphan placeholders
@@ -649,14 +656,36 @@ function addMessage(role, content, streaming=false, rawHtml=false) {
   return div;
 }
 
+// Throttled stream rendering — at most once per 150ms
+let _streamThrottleTimer = null;
+let _streamLatestContent = '';
+let _streamLatestDiv = null;
+
 function updateStreamMessage(div, content) {
-  const body = div.querySelector('.msg-body');
-  body.innerHTML = renderMarkdown(content);
+  _streamLatestContent = content;
+  _streamLatestDiv = div;
+  if (_streamThrottleTimer) return; // throttled, will render on next tick
+  _doStreamRender();
+  _streamThrottleTimer = setTimeout(() => {
+    _streamThrottleTimer = null;
+    // Render the latest content that arrived during throttle window
+    _doStreamRender();
+  }, 150);
+}
+
+function _doStreamRender() {
+  if (!_streamLatestDiv) return;
+  const body = _streamLatestDiv.querySelector('.msg-body');
+  body.innerHTML = renderMarkdown(_streamLatestContent);
   body.classList.add('cursor-blink');
   scrollToBottom();
 }
 
 function finalizeMessage(div, content) {
+  // Clear any pending throttled render
+  if (_streamThrottleTimer) { clearTimeout(_streamThrottleTimer); _streamThrottleTimer = null; }
+  _streamLatestDiv = null;
+  _streamLatestContent = '';
   const body = div.querySelector('.msg-body');
   body.innerHTML = renderMarkdown(content);
   body.classList.remove('cursor-blink');

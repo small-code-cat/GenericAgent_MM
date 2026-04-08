@@ -7,6 +7,7 @@
 远程开发: remote_develop/remote_dev_sop(SSH读写执行远程服务器,配置ssh_config.py)
 用户个人信息(画像/社交/生物特征/偏好/环境等): recall/memorize操作记忆库 | recall不足→浏览器搜索降级(图搜/文搜) | 🔴必须先读mm_memory_sop
 PDF知识库(用户提到知识库/查文档/查PDF): 🔴先读pdf_knowledge/pdf_knowledge_sop.md再行动
+论文写作、绘图、审稿: 🔴先读memory/paper-writing-sop.md再行动
 
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
