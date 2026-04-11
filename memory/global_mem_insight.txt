@@ -7,12 +7,12 @@
 远程开发: remote_develop/remote_dev_sop(SSH读写执行远程服务器,配置ssh_config.py)
 用户个人信息(画像/社交/生物特征/偏好/环境等): recall/memorize操作记忆库 | recall不足→浏览器搜索降级(图搜/文搜) | 🔴必须先读mm_memory_sop
 PDF知识库(用户提到知识库/查文档/查PDF): 🔴先读pdf_knowledge/pdf_knowledge_sop.md再行动
-论文写作、绘图、审稿: 🔴先读memory/paper-writing-sop.md再行动
+论文写作(调研/survey/ideate/实验/写论文/write/review): paper_writing_sop(双模式:独立→temp/项目→根目录 | 模块化:survey→ideate→experiment→write→review,可独立触发)
 
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
 L2: 环境(OS/浏览器)
-L3: web_setup_sop | autonomous_operation_sop | scheduled_task_sop | ljqCtrl_sop+.py | tmwebdriver_sop | subagent_sop | plan_sop | mem_scanner.py | adb_ui.py | multimodal_memory/mm_memory_sop | pdf_knowledge_sop | overleaf_sop
+L3: web_setup_sop | autonomous_operation_sop | scheduled_task_sop | ljqCtrl_sop+.py | tmwebdriver_sop | subagent_sop | plan_sop | mem_scanner.py | adb_ui.py | multimodal_memory/mm_memory_sop | pdf_knowledge_sop | overleaf_sop | paper_writing_sop
 
 [RULES]
 1. 搜索先行: 信息尽量用google（必须web）, 项目内os.listdir, 禁猜路径
@@ -26,4 +26,5 @@ L3: web_setup_sop | autonomous_operation_sop | scheduled_task_sop | ljqCtrl_sop+
 9. SOP: 执行前读取缓存硬参数,禁凭印象,有utils必用; 复杂长程先读plan_sop
 10. 用户提及或复杂长程需规划任务要读plan_sop进入规划模式
 11. 🔴图文输入路由: 个人问题→recall记忆库(🔴必须先读mm_memory_sop)→无果→浏览器搜索用户输入的图文; 非个人→自身知识直答→不足→浏览器搜索用户输入的图文
+12. LaTeX/md编辑: file_patch遇\\转义必失败→file_write写临时文件+Python行拼接替换
 

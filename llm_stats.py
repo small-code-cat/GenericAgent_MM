@@ -3,6 +3,8 @@ import os, json, time, base64, struct, zlib, re
 from datetime import datetime
 
 try:
+    os.environ.setdefault("TIKTOKEN_CACHE_DIR",
+                          os.path.join(os.path.dirname(__file__), "tiktoken_cache"))
     import tiktoken
     _enc = tiktoken.encoding_for_model("gpt-4o")
 except Exception:

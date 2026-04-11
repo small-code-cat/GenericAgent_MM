@@ -1,13 +1,11 @@
-<div align="center">
-<img src="assets/images/bar.jpg" width="880"/>
-</div>
 
-<p align="center">
-  <a href="#english">English</a> | <a href="#chinese">中文</a>
-</p>
+
+[English](#english) | [中文](#chinese)
 
 ---
-<a name="english"></a>
+
+
+
 ## 🌟 Overview
 
 **GenericAgent_MM** is a secondary development based on [GenericAgent](https://github.com/lsdefine/GenericAgent), adding **multimodal memory** capabilities. On top of GenericAgent's minimal self-evolving agent framework (~3,300 lines of core code, 7 atomic tools + 92-line Agent Loop for full system-level control), GenericAgent_MM introduces a persistent multimodal memory system — the agent can **memorize and recall both text and images** via semantic vector search, progressively building a rich, personalized understanding of the user (preferences, photos, personal info, etc.). The longer you interact, the more it knows you.
@@ -42,9 +40,10 @@ python webapp.py
 
 MIT License — see [LICENSE](LICENSE)
 
-
 ---
-<a name="chinese"></a>
+
+
+
 ## 🌟 项目简介
 
 **GenericAgent_MM** 是在 [GenericAgent](https://github.com/lsdefine/GenericAgent) 基础上的二次开发，新增了**多模态记忆**能力。在 GenericAgent 极简自进化 Agent 框架（~3,300 行核心代码，7 个原子工具 + 92 行 Agent Loop 实现系统级控制）之上，GenericAgent_MM 引入了持久化多模态记忆系统 —— Agent 能够通过语义向量检索**记忆和召回文本与图片**，在交互中逐步构建对用户的个性化理解（偏好、照片、个人信息等）。交互越多，它越了解你。
@@ -61,7 +60,7 @@ git clone https://github.com/small-code-cat/GenericAgent_MM.git
 cd GenericAgent_MM
 
 # 2. 安装依赖
-pip install streamlit pywebview
+pip install streamlit pywebview beautifulsoup4
 
 # 3. 配置 API Key
 cp mykey_template.py mykey.py
