@@ -4,7 +4,6 @@
 定时任务: scheduled_task_sop(报告→sche_tasks/done/) | 与自主任务完全独立
 自主探索任务: autonomous_operation_sop(报告→temp/autonomous_reports/history.txt，不在memory下) | 与定时任务完全独立
 手机操控: adb_ui.py
-远程开发: remote_develop/remote_dev_sop(SSH读写执行远程服务器,配置ssh_config.py)
 用户个人信息(画像/社交/生物特征/偏好/环境等): recall/memorize操作记忆库 | recall不足→浏览器搜索降级(图搜/文搜) | 🔴必须先读mm_memory_sop
 PDF知识库(用户提到知识库/查文档/查PDF): 🔴先读pdf_knowledge/pdf_knowledge_sop.md再行动
 论文写作(调研/survey/ideate/实验/写论文/write/review): paper_writing_sop(双模式:独立→temp/项目→根目录 | 模块化:survey→ideate→experiment→write→review,可独立触发)
