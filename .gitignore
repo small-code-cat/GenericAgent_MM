@@ -116,5 +116,4 @@ memory/pdf_knowledge/pages
 memory/pdf_knowledge/*.db
 !memory/pdf_knowledge
 
-!memory/overleaf_sop.md
-!memory/paper-writing-sop.md
+!memory/survey_sop.md
