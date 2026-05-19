@@ -1,0 +1,10 @@
+## [TOOLS]
+- lark-cli: 飞书CLI，npm包@larksuite/cli(pip的lark-cli是占位符勿用)，配置~/.lark-cli/config.json
+  - 凭据: mykey.py中fs_app_id/fs_app_secret
+  - 认证: `lark-cli auth login`(Device Flow需浏览器授权)，token 2h过期自动refresh(7天)
+  - 初始化: `echo $SECRET | lark-cli config init --app-id $ID --app-secret-stdin`
+
+## [ENV]
+- OS: macOS (Apple Silicon)
+- Node: v26.0.0 (brew)
+- Python项目根: /Users/xuekejun/CursorProjects/GenericAgent_MM

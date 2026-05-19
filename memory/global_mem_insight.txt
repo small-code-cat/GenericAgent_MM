@@ -8,6 +8,7 @@
 PDF知识库(用户提到知识库/查文档/查PDF): 🔴先读pdf_knowledge/pdf_knowledge_sop.md再行动
 论文调研/survey/文献: survey_sop
 
+飞书CLI(lark-cli): L2 [TOOLS]
 需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
 L2: 环境(OS/浏览器)
